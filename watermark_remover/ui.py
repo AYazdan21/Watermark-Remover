@@ -6,6 +6,7 @@ from .photo_inpainter import (
     auto_detect_and_inpaint,
     inpaint_watermark,
 )
+from .router import DOCUMENT_LABEL, PHOTO_LABEL, auto_remove_watermark, detect_mode
 from .storage import manual_save_triple
 
 custom_css = """
@@ -21,11 +22,48 @@ def build_ui():
         gr.Markdown(
             """
             # 🦙 Watermark Remover Suite
-            Choose the best tool based on your image type:
+            Upload an image on the **✨ Auto** tab and it detects whether it's a scanned
+            document or a natural photo and picks the right tool for you. Prefer full manual
+            control? The tools it dispatches to are still available on their own tabs:
             - **📄 1-Click Document Cleaner (No Mask)**: For scanned documents, notices, PDF pages, contracts. Removes semi-transparent watermarks with **1 click in 3ms** while preserving 100% of the underlying text.
             - **🎨 Photo Inpainter (LaMa + Brush)**: For natural photos, scenery, people, or solid opaque watermarks/objects.
             """
         )
+
+        # ==========================================
+        # TAB 0: Auto (detects document vs. photo)
+        # ==========================================
+        with gr.Tab("✨ Auto (Recommended)"):
+            with gr.Row():
+                with gr.Column(scale=5):
+                    auto_input = gr.Image(label="1. Upload Image", type="pil")
+                    auto_mode_radio = gr.Radio(
+                        choices=[DOCUMENT_LABEL, PHOTO_LABEL],
+                        value=DOCUMENT_LABEL,
+                        label="Detected Mode (auto-filled — override if it looks wrong)",
+                    )
+                    auto_status = gr.Markdown(value="Upload an image to auto-detect its type.")
+                    auto_save_chk_top = gr.Checkbox(
+                        label="Auto-save triple on removal (Photo mode only)",
+                        value=True,
+                        info="Writes {N}_original.png, {N}_mask.png, {N}_result.png to dataset/ when Photo mode runs.",
+                    )
+                    btn_auto_remove = gr.Button("✨ Remove Watermark", variant="primary", size="lg")
+
+                with gr.Column(scale=5):
+                    auto_output = gr.Image(label="2. Result", type="pil")
+
+            auto_input.change(
+                fn=detect_mode,
+                inputs=[auto_input],
+                outputs=[auto_mode_radio, auto_status],
+            )
+
+            btn_auto_remove.click(
+                fn=auto_remove_watermark,
+                inputs=[auto_input, auto_mode_radio, auto_save_chk_top],
+                outputs=[auto_output, auto_status],
+            )
 
         # ==========================================
         # TAB 1: 1-Click Document Cleaner
