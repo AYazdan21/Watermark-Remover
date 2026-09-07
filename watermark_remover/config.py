@@ -19,6 +19,13 @@ ORIGINALS_DIR = os.path.join(DATASET_DIR, "originals")
 MASKS_DIR = os.path.join(DATASET_DIR, "masks")
 RESULTS_DIR = os.path.join(DATASET_DIR, "results")
 CLEANED_DOCS_DIR = os.path.join(DATASET_DIR, "cleaned_documents")
+# Raw watermarked input for the document pipeline, paired by index with
+# CLEANED_DOCS_DIR (see document_cleaner.py). The photo pipeline already
+# keeps its raw originals (ORIGINALS_DIR); the document pipeline never did,
+# so there was no way to re-run or compare past document cleanings against
+# their real source, or to accumulate same-source examples for future
+# watermark-recognition work.
+DOCUMENT_ORIGINALS_DIR = os.path.join(DATASET_DIR, "document_originals")
 
-for folder in [ORIGINALS_DIR, MASKS_DIR, RESULTS_DIR, CLEANED_DOCS_DIR]:
+for folder in [ORIGINALS_DIR, MASKS_DIR, RESULTS_DIR, CLEANED_DOCS_DIR, DOCUMENT_ORIGINALS_DIR]:
     os.makedirs(folder, exist_ok=True)

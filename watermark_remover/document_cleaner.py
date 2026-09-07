@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .config import CLEANED_DOCS_DIR
+from .config import CLEANED_DOCS_DIR, DOCUMENT_ORIGINALS_DIR
 from .localizer import is_trusted, localize_watermark
 
 # How much to relax the erasure threshold inside a confidently-localized
@@ -330,10 +330,13 @@ def clean_document_auto(
 
     elapsed_ms = (time.time() - t0) * 1000
 
-    # Auto-save cleaned document
+    # Auto-save cleaned document, paired with its raw watermarked input --
+    # without the input, a past cleaning can never be re-run, compared
+    # against a code change, or pooled with same-source examples later.
     doc_index = len(os.listdir(CLEANED_DOCS_DIR)) + 1
     save_path = os.path.join(CLEANED_DOCS_DIR, f"{doc_index}_cleaned.png")
     Image.fromarray(cleaned).save(save_path)
+    Image.fromarray(img_np).save(os.path.join(DOCUMENT_ORIGINALS_DIR, f"{doc_index}_original.png"))
 
     extra_notes = []
     if snapped_grid_applied:
