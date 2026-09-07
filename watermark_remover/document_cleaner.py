@@ -7,12 +7,7 @@ from PIL import Image
 
 from .config import CLEANED_DOCS_DIR, DOCUMENT_ORIGINALS_DIR
 from .localizer import is_trusted, localize_watermark
-
-# How much to relax the erasure threshold inside a confidently-localized
-# watermark region. Outside that region localization only ever protects
-# (see clean_document_auto), so being more aggressive here -- to fully
-# clear faint watermark remnants -- doesn't add collateral-damage risk.
-_LOCALIZED_THRESHOLD_RELAX = 15
+from .unmixer import unmix_region
 
 
 def auto_detect_document_profile(img_np):
@@ -175,6 +170,12 @@ def clean_document_auto(
     # Base thresholding (Otsu)
     base_thresh, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     final_thresh = int(np.clip(base_thresh + sensitivity_offset, 60, 245))
+    # Real ink (body text, logos) is solidly dark, well below the erasure
+    # threshold -- as opposed to a watermark, which is at most a partial
+    # blend with the paper and therefore lighter. Used to keep unmixing
+    # and gridline rendering from touching real content that a localized
+    # watermark region happens to overlap.
+    is_dark_text = gray < (final_thresh - 15)
 
     # Detect and protect table gridlines if enabled
     clean_grid = np.zeros((h, w), dtype=np.uint8)
@@ -278,17 +279,6 @@ def clean_document_auto(
         t_high = float(final_thresh + 6)
         alpha = np.clip((t_high - gray.astype(np.float32)) / (t_high - t_low), 0.0, 1.0)
 
-        if localized:
-            # Relax the threshold inside the confidently-localized watermark
-            # region to fully clear faint remnants there. This only ever
-            # increases erasure within a zone we're already confident is
-            # watermark, so it can't cost content anywhere else -- unlike
-            # gating erasure by the mask's complement, which would wrongly
-            # protect any part of the watermark the localizer under-covers.
-            local_low, local_high = t_low - _LOCALIZED_THRESHOLD_RELAX, t_high - _LOCALIZED_THRESHOLD_RELAX
-            local_alpha = np.clip((local_high - gray.astype(np.float32)) / (local_high - local_low), 0.0, 1.0)
-            alpha = np.where(wm_mask > 0, np.minimum(alpha, local_alpha), alpha)
-
         if protect_tables:
             # Detected gridlines are protected from the blend itself, not
             # just redrawn afterward -- previously this exclusion only
@@ -302,11 +292,42 @@ def clean_document_auto(
         cleaned = (alpha * img_np.astype(float) + (1.0 - alpha) * target_bg.astype(float)).astype(np.uint8)
     else:
         erasable = (gray >= final_thresh) & (~grid_mask_dilated)
-        if localized:
-            boosted = (wm_mask > 0) & (gray >= final_thresh - _LOCALIZED_THRESHOLD_RELAX) & (~grid_mask_dilated)
-            erasable = erasable | boosted
         cleaned = img_np.copy()
         cleaned[erasable] = target_bg[erasable]
+
+    if localized:
+        # Recover true pixel values inside the confidently-localized
+        # watermark region instead of flattening them to target_bg -- a
+        # semi-transparent mark blends observed = alpha*mark + (1-alpha)*
+        # true, so wherever alpha can be estimated, the true pixel can be
+        # solved for directly rather than replaced with a guessed flat
+        # color (see unmixer.py). Document watermarks are typically
+        # *darker* than the surrounding paper (unlike a bright overlay on
+        # a photo), so the color estimate looks for the darkest pixels
+        # relative to local surroundings, matching the same convention the
+        # localizer's own residual band uses.
+        #
+        # The two-component blend model (paper + watermark) only holds
+        # where the true content actually is paper. A watermark region
+        # frequently overlaps real ink (that's the whole problem), and
+        # unmixing real dark text against that model isn't a no-op -- an
+        # early version of this tried it and visibly discolored real
+        # text, since ink isn't a paper/watermark blend at all. is_dark_text
+        # (already-solid ink, well below the erasure threshold) is
+        # excluded so unmixing only ever touches pixels that plausibly are
+        # paper-plus-watermark to begin with.
+        unmix_target = (wm_mask > 0) & (~grid_mask_dilated) & (~is_dark_text)
+        if np.any(unmix_target):
+            local_bg = cv2.medianBlur(gray, max(15, (min(h, w) // 12) | 1))
+            evidence = local_bg.astype(np.float64) - gray.astype(np.float64)
+            # A document's page background is already reliably estimated
+            # (target_bg, built above from margin/paper sampling) and holds
+            # almost everywhere -- a far more robust background for the
+            # unmix equation than interpolating one from context, which on
+            # a text-dense page (many small excluded holes at every real
+            # character) produced visible residual smudging in testing.
+            result = unmix_region(img_np, unmix_target.astype(np.uint8) * 255, evidence=evidence, background=target_bg)
+            cleaned[unmix_target] = result.recovered[unmix_target]
 
     # Re-apply or normalize protected gridlines
     if protect_tables:
@@ -316,7 +337,6 @@ def clean_document_auto(
         line_render_val = int(round(med_val - contrast_factor * max(0, med_val - dark_floor)))
 
         if snapped_grid_applied:
-            is_dark_text = (gray < final_thresh - 15)
             grid_pixels = (clean_grid > 0) & (~is_dark_text)
             cleaned[grid_pixels] = [line_render_val, line_render_val, line_render_val]
         elif grid_contrast > 0:
