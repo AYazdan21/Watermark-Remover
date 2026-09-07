@@ -6,6 +6,13 @@ import numpy as np
 from PIL import Image
 
 from .config import CLEANED_DOCS_DIR
+from .localizer import is_trusted, localize_watermark
+
+# How much to relax the erasure threshold inside a confidently-localized
+# watermark region. Outside that region localization only ever protects
+# (see clean_document_auto), so being more aggressive here -- to fully
+# clear faint watermark remnants -- doesn't add collateral-damage risk.
+_LOCALIZED_THRESHOLD_RELAX = 15
 
 
 def auto_detect_document_profile(img_np):
@@ -136,6 +143,15 @@ def clean_document_auto(
     else:
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
 
+    # Localize the watermark itself (see localizer.py) so erasure can be
+    # gated to where the watermark actually is instead of any pixel that
+    # merely happens to be light. Only trusted when confident/plausible --
+    # otherwise erasure falls back to the original global-threshold rule
+    # below, so an unusual image can't cause the tool to silently stop
+    # removing the watermark.
+    wm_mask, wm_coverage, wm_confidence = localize_watermark(gray)
+    localized = is_trusted(wm_coverage, wm_confidence)
+
     # 1. Sample outer margin (top/bottom/left/right 2% border)
     m_h = max(2, int(h * 0.025))
     m_w = max(2, int(w * 0.025))
@@ -169,6 +185,14 @@ def clean_document_auto(
     if protect_tables:
         tophat_h = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5)))
         tophat_v = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1)))
+
+        if localized:
+            # Watermark strokes crossing a gridline register as dark
+            # blackhat features too, "bridging" gaps into spurious extra
+            # line fragments. Suppressing them here keeps line detection
+            # reading the real grid instead of the watermark's shape.
+            tophat_h[wm_mask > 0] = 0
+            tophat_v[wm_mask > 0] = 0
 
         h_cand = (tophat_h >= 7).astype(np.uint8) * 255
         v_cand = (tophat_v >= 7).astype(np.uint8) * 255
@@ -252,10 +276,35 @@ def clean_document_auto(
     if anti_alias:
         t_low = float(final_thresh - 6)
         t_high = float(final_thresh + 6)
-        alpha = np.clip((t_high - gray.astype(float)) / (t_high - t_low), 0.0, 1.0)[:, :, None]
+        alpha = np.clip((t_high - gray.astype(np.float32)) / (t_high - t_low), 0.0, 1.0)
+
+        if localized:
+            # Relax the threshold inside the confidently-localized watermark
+            # region to fully clear faint remnants there. This only ever
+            # increases erasure within a zone we're already confident is
+            # watermark, so it can't cost content anywhere else -- unlike
+            # gating erasure by the mask's complement, which would wrongly
+            # protect any part of the watermark the localizer under-covers.
+            local_low, local_high = t_low - _LOCALIZED_THRESHOLD_RELAX, t_high - _LOCALIZED_THRESHOLD_RELAX
+            local_alpha = np.clip((local_high - gray.astype(np.float32)) / (local_high - local_low), 0.0, 1.0)
+            alpha = np.where(wm_mask > 0, np.minimum(alpha, local_alpha), alpha)
+
+        if protect_tables:
+            # Detected gridlines are protected from the blend itself, not
+            # just redrawn afterward -- previously this exclusion only
+            # applied in the non-anti-aliased branch below, so here (the
+            # default) gridlines were fully erased and had to be perfectly
+            # reconstructed pixel-for-pixel by the redraw step, leaving
+            # fragments wherever peak detection wasn't exact.
+            alpha = np.where(grid_mask_dilated, 1.0, alpha)
+
+        alpha = alpha[:, :, None]
         cleaned = (alpha * img_np.astype(float) + (1.0 - alpha) * target_bg.astype(float)).astype(np.uint8)
     else:
         erasable = (gray >= final_thresh) & (~grid_mask_dilated)
+        if localized:
+            boosted = (wm_mask > 0) & (gray >= final_thresh - _LOCALIZED_THRESHOLD_RELAX) & (~grid_mask_dilated)
+            erasable = erasable | boosted
         cleaned = img_np.copy()
         cleaned[erasable] = target_bg[erasable]
 
@@ -288,6 +337,8 @@ def clean_document_auto(
         extra_notes.append("Anti-Aliased")
     if stamp_filter != "None (Standard)":
         extra_notes.append(stamp_filter)
+    if localized:
+        extra_notes.append(f"Watermark Localized ({wm_coverage * 100:.1f}% of page)")
     notes_str = f" | {', '.join(extra_notes)}" if extra_notes else ""
 
     status = (
