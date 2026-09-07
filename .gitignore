@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Model weights (large binaries — fetch/place separately, see README)
+*.pt
+*.ckpt
+*.zip
+lama/
+
+# Gradio runtime
+gradio_cached_examples/
+.gradio/
+flagged/
+
+# Generated dataset output (grows at runtime via the app's auto-save;
+# not source. Re-created automatically on first run.)
+dataset/
+
+# Ad hoc dev/debug snapshots from manual testing (root-level only)
+/test_*.png
+/test_*.jpg
+/sample_*.jpg
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

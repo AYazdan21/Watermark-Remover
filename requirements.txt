@@ -1,0 +1,14 @@
+# Core app
+gradio==6.26.0
+numpy==1.26.4
+opencv-python==4.11.0.86
+Pillow==9.5.0
+simple-lama-inpainting==0.1.2
+ultralytics==8.4.142
+
+# Torch: install the CUDA build matching your GPU/driver from
+# https://pytorch.org/get-started/locally/ (this project was developed against
+# torch==2.6.0+cu124 / torchvision==0.21.0+cu124). CPU-only fallback:
+#   pip install torch==2.6.0 torchvision==0.21.0
+torch==2.6.0
+torchvision==0.21.0
