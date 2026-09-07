@@ -1,6 +1,6 @@
 import gradio as gr
 
-from .document_cleaner import clean_document_auto
+from . import doc_core
 from .photo_inpainter import (
     auto_detect_watermark,
     auto_detect_and_inpaint,
@@ -72,80 +72,136 @@ def build_ui():
             with gr.Row():
                 with gr.Column(scale=5):
                     doc_input = gr.Image(label="1. Upload Document Image", type="pil")
+
+                    method_radio = gr.Radio(
+                        choices=[doc_core.METHOD_THRESHOLD, doc_core.METHOD_UNMIX, doc_core.METHOD_SEGMENT],
+                        value=doc_core.METHOD_THRESHOLD,
+                        label="Cleaning Method",
+                        info=(
+                            "M1 is the original bug-for-bug algorithm (flat background fill). "
+                            "M2 is identical to M1 except it recovers the true pixel via alpha "
+                            "unmixing instead of flattening it. M3 segments and deblends the "
+                            "watermark (separate settings below)."
+                        ),
+                    )
+
                     smart_auto_chk = gr.Checkbox(
                         label="✨ Smart Auto-Pilot (Zero Setup - auto-configures all settings from image)",
                         value=True,
                         info="Automatically analyzes image geometry, spreadsheets, margins, paper tints, and contrast. Uncheck to manually override settings below.",
                     )
-                    with gr.Row():
-                        bg_mode_select = gr.Radio(
-                            choices=[
-                                "Dual-Zone Auto (White Margin + Cream Paper)",
-                                "Inner Paper Tint Only",
-                                "Pure White Everywhere",
-                            ],
-                            value="Dual-Zone Auto (White Margin + Cream Paper)",
-                            label="Background Fill Mode",
-                            info="Dual-Zone automatically keeps the white margin outside the border and the natural cream color inside.",
-                        )
-                    with gr.Row():
-                        thresh_slider = gr.Slider(
-                            minimum=-40,
-                            maximum=40,
-                            value=0,
-                            step=2,
-                            label="Threshold Fine-Tuning",
-                            info="0 = Automatic (Otsu). Move left if faint watermark remains; move right if dark text fades.",
-                        )
-                    with gr.Row():
-                        protect_tables_chk = gr.Checkbox(
-                            label="Protect Table / Spreadsheet Gridlines",
-                            value=True,
-                            info="Detects and preserves thin horizontal and vertical Excel/table borders.",
-                        )
-                    with gr.Accordion("📐 Advanced Table & Stamp Settings", open=False):
+
+                    with gr.Group(visible=True) as m1_m2_settings_group:
                         with gr.Row():
-                            snap_gridlines_chk = gr.Checkbox(
-                                label="Snap & Straighten Gridlines (Mathematical Grid)",
+                            bg_mode_select = gr.Radio(
+                                choices=[
+                                    "Dual-Zone Auto (White Margin + Cream Paper)",
+                                    "Inner Paper Tint Only",
+                                    "Pure White Everywhere",
+                                ],
+                                value="Dual-Zone Auto (White Margin + Cream Paper)",
+                                label="Background Fill Mode",
+                                info="Dual-Zone automatically keeps the white margin outside the border and the natural cream color inside.",
+                            )
+                        with gr.Row():
+                            thresh_slider = gr.Slider(
+                                minimum=-40,
+                                maximum=40,
+                                value=0,
+                                step=2,
+                                label="Threshold Fine-Tuning",
+                                info="0 = Automatic (Otsu). Move left if faint watermark remains; move right if dark text fades.",
+                            )
+                        with gr.Row():
+                            protect_tables_chk = gr.Checkbox(
+                                label="Protect Table / Spreadsheet Gridlines",
                                 value=True,
-                                info="Replaces bumpy/distorted watermark intersections with perfectly straight lines.",
+                                info="Detects and preserves thin horizontal and vertical Excel/table borders.",
                             )
-                            anti_alias_chk = gr.Checkbox(
-                                label="Soft Anti-Aliasing",
+                        with gr.Accordion("📐 Advanced Table & Stamp Settings", open=False):
+                            with gr.Row():
+                                snap_gridlines_chk = gr.Checkbox(
+                                    label="Snap & Straighten Gridlines (Mathematical Grid)",
+                                    value=True,
+                                    info="Replaces bumpy/distorted watermark intersections with perfectly straight lines.",
+                                )
+                                anti_alias_chk = gr.Checkbox(
+                                    label="Soft Anti-Aliasing",
+                                    value=True,
+                                    info="Eliminates jagged sawtooth pixel steps on low-res screenshots. (M1 only -- M2's removal region is defined by the threshold regardless of this setting.)",
+                                )
+                            with gr.Row():
+                                thickness_select = gr.Radio(
+                                    choices=["1px (Hairline)", "2px (Standard)", "Auto"],
+                                    value="1px (Hairline)",
+                                    label="Gridline Target Thickness",
+                                )
+                                stamp_filter_select = gr.Dropdown(
+                                    choices=["None (Standard)", "Red Stamp Filter", "Blue Stamp Filter"],
+                                    value="None (Standard)",
+                                    label="Stamp Color Filter",
+                                    info="Mathematically erases colored rubber stamps over black text via optical channel separation.",
+                                )
+                            with gr.Row():
+                                grid_contrast_slider = gr.Slider(
+                                    minimum=0,
+                                    maximum=100,
+                                    value=50,
+                                    step=5,
+                                    label="Gridline Contrast / Darkness (%)",
+                                    info="0% = Original faint shade; 50% = Crisp & clear (Recommended); 100% = Bold dark borders.",
+                                )
+
+                    with gr.Group(visible=False) as m3_settings_group:
+                        with gr.Row():
+                            seg_conf_slider = gr.Slider(
+                                minimum=0.05,
+                                maximum=0.9,
+                                value=0.15,
+                                step=0.01,
+                                label="Segmentation Confidence",
+                                info="Lower catches fainter/smaller watermark regions; higher is stricter.",
+                            )
+                        with gr.Row():
+                            seg_model_select = gr.Dropdown(
+                                choices=["Both (Union)", "YOLO11s", "YOLO11 General"],
+                                value="Both (Union)",
+                                label="Segmentation Model",
+                            )
+                            seg_use_sam_chk = gr.Checkbox(
+                                label="Refine with SAM",
                                 value=True,
-                                info="Eliminates jagged sawtooth pixel steps on low-res screenshots.",
+                                info="Uses Mobile-SAM to refine detected boxes into precise masks before deblending.",
                             )
-                        with gr.Row():
-                            thickness_select = gr.Radio(
-                                choices=["1px (Hairline)", "2px (Standard)", "Auto"],
-                                value="1px (Hairline)",
-                                label="Gridline Target Thickness",
-                            )
-                            stamp_filter_select = gr.Dropdown(
-                                choices=["None (Standard)", "Red Stamp Filter", "Blue Stamp Filter"],
-                                value="None (Standard)",
-                                label="Stamp Color Filter",
-                                info="Mathematically erases colored rubber stamps over black text via optical channel separation.",
-                            )
-                        with gr.Row():
-                            grid_contrast_slider = gr.Slider(
-                                minimum=0,
-                                maximum=100,
-                                value=50,
-                                step=5,
-                                label="Gridline Contrast / Darkness (%)",
-                                info="0% = Original faint shade; 50% = Crisp & clear (Recommended); 100% = Bold dark borders.",
-                            )
+
+                    save_dataset_chk = gr.Checkbox(
+                        label="💾 Auto-save to dataset/ (raw original + cleaned result)",
+                        value=True,
+                        info="Writes {N}_original.png / {N}_cleaned.png to dataset/. Uncheck to run without touching dataset/.",
+                    )
                     btn_clean_doc = gr.Button("⚡ Clean Document (1-Click)", variant="primary", size="lg")
                     doc_status = gr.Markdown(value="Upload a document and click Clean.")
 
                 with gr.Column(scale=5):
                     doc_output = gr.Image(label="2. Cleaned Document (100% Text Preserved)", type="pil")
 
+            def _toggle_doc_method_groups(method):
+                return (
+                    gr.update(visible=(method != doc_core.METHOD_SEGMENT)),
+                    gr.update(visible=(method == doc_core.METHOD_SEGMENT)),
+                )
+
+            method_radio.change(
+                fn=_toggle_doc_method_groups,
+                inputs=[method_radio],
+                outputs=[m1_m2_settings_group, m3_settings_group],
+            )
+
             btn_clean_doc.click(
-                fn=clean_document_auto,
+                fn=doc_core.clean_document,
                 inputs=[
                     doc_input,
+                    method_radio,
                     thresh_slider,
                     bg_mode_select,
                     protect_tables_chk,
@@ -155,6 +211,10 @@ def build_ui():
                     stamp_filter_select,
                     grid_contrast_slider,
                     smart_auto_chk,
+                    seg_conf_slider,
+                    seg_model_select,
+                    seg_use_sam_chk,
+                    save_dataset_chk,
                 ],
                 outputs=[doc_output, doc_status],
             )
