@@ -6,35 +6,8 @@ import numpy as np
 from PIL import Image
 
 from .config import CLEANED_DOCS_DIR, DOCUMENT_ORIGINALS_DIR
-from .localizer import _estimate_stroke_scale, is_trusted, localize_watermark
+from .localizer import is_trusted, localize_watermark
 from .unmixer import unmix_region
-
-
-def _local_background_estimate(img_np: np.ndarray, gray: np.ndarray, kernel_mult: float = 5.0) -> np.ndarray:
-    """Reconstructs a smoothly-varying background color map by closing away
-    dark features up to about `kernel_mult` times the text stroke width per
-    color channel, leaving whatever paper/background tone actually
-    surrounds them. A single flat fill color (the previous behavior) can't
-    represent a page whose background isn't uniform -- e.g. a form
-    screenshot with gray UI gaps scattered between white input boxes
-    throughout, not just outside one margin -- so it replaced those gaps
-    with the wrong flat color. Closing captures the real local color
-    instead.
-
-    The default kernel_mult is sized to close over body text, not a whole
-    watermark -- a kernel wide enough for that also blurred and merged
-    genuine field-box edges together in testing. That's fine for the page
-    in general: this is only the baseline fill for erasable pixels outside
-    the localizer's own trusted mask, which unmix_region already recovers
-    precisely inside its own region regardless of what this estimate says
-    there. A larger kernel_mult is used in a halo around that region (see
-    clean_document_auto), where it needs to close over the watermark
-    itself instead.
-    """
-    stroke = float(np.clip(_estimate_stroke_scale(gray), 1.0, 12.0))
-    k = max(3, int(round(stroke * kernel_mult))) | 1
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-    return cv2.morphologyEx(img_np, cv2.MORPH_CLOSE, kernel)
 
 
 def auto_detect_document_profile(img_np):
@@ -299,36 +272,6 @@ def clean_document_auto(
         else:
             target_bg[:] = inner_color
             zone_info = f"Paper Tint RGB {tuple(inner_color)}"
-
-    if bg_mode != "Pure White Everywhere":
-        # Refine the flat estimate above into a locally-varying one -- the
-        # zone_info colors are still computed and reported (a real, useful
-        # coarse read of the page), but a real form-style document tested
-        # here had gray gaps scattered *between* white input boxes all
-        # through the page, not just outside one margin, which no amount
-        # of flat single/dual-zone fill can represent. "Pure White
-        # Everywhere" is left alone: picking it is an explicit request for
-        # a hard uniform result, not an estimate to refine.
-        local_bg = _local_background_estimate(img_np, gray)
-        if localized:
-            # The default closing kernel above is sized to close over body
-            # text, not a whole watermark (a kernel that big everywhere
-            # also merged and distorted genuine field-box edges in
-            # testing) -- so just outside the localizer's confidently-
-            # trusted core, it can leave a faint watermark echo baked into
-            # the "background" estimate, visible as ghosting on a document
-            # that previously came out clean. A wider closing kernel (not
-            # a flat-color fallback -- that swallowed real gray UI
-            # elements sitting close to the mark on another real case)
-            # fixes this specifically in a halo around the trusted region,
-            # where it needs to close over the watermark's own stroke
-            # width instead of just text. Phase 5a's unmix_region already
-            # recovers the confident core precisely regardless.
-            halo_bg = _local_background_estimate(img_np, gray, kernel_mult=30.0)
-            halo_k = max(9, int(round(min(h, w) * 0.05))) | 1
-            halo = cv2.dilate(wm_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (halo_k, halo_k))) > 0
-            local_bg = np.where(halo[:, :, None], halo_bg, local_bg)
-        target_bg = local_bg
 
     # Apply background fill with soft anti-aliasing or hard threshold
     if anti_alias:

@@ -44,31 +44,6 @@ def _estimate_stroke_scale(gray: np.ndarray) -> float:
     return float(np.median(vals))
 
 
-# A connected candidate blob wider than this fraction of the page AND at
-# least this "filled in" (area / bounding-box area) reads as a solid bar,
-# not a watermark glyph. Found on a real form screenshot: the coarse-vs-
-# fine residual doesn't just respond to watermarks -- a sharp edge between
-# two differently-shaded page sections (a header bar, a table-to-textbox
-# boundary) looks the same to it, and registered at fill_ratio=0.99,
-# spanning 98% and 31% of the page width. The same document's real
-# watermark text components were all <=48px wide with fill_ratio <=0.80 --
-# real glyphs have gaps; a solid-color rectangle's edge doesn't.
-_BAR_MIN_WIDTH_FRAC = 0.25
-_BAR_MIN_FILL_RATIO = 0.9
-
-
-def _strip_structural_bars(candidate: np.ndarray) -> np.ndarray:
-    h, w = candidate.shape[:2]
-    n, labels, stats, _ = cv2.connectedComponentsWithStats(candidate, connectivity=8)
-    out = candidate.copy()
-    for i in range(1, n):
-        x, y, bw, bh, area = stats[i]
-        fill_ratio = area / max(1, bw * bh)
-        if bw >= _BAR_MIN_WIDTH_FRAC * w and fill_ratio >= _BAR_MIN_FILL_RATIO:
-            out[labels == i] = 0
-    return out
-
-
 def _band_stats(band: np.ndarray):
     band_vals = band[band > 0]
     if band_vals.size < 50:
@@ -148,7 +123,6 @@ def localize_watermark(gray: np.ndarray):
     # glyph is broader than a single character stem at this residual scale.
     open_k = max(2, int(round(stroke)))
     candidate = cv2.morphologyEx(candidate, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_k, open_k)))
-    candidate = _strip_structural_bars(candidate)
 
     if float(np.mean(candidate > 0)) < 1e-6:
         return empty, 0.0, 0.0
@@ -160,26 +134,9 @@ def localize_watermark(gray: np.ndarray):
     # Dilate to cover anti-aliased/blurred watermark edges and thin
     # connecting strokes the open() pass may have removed, proportional to
     # the winning watermark scale itself (not the much smaller text
-    # stroke), converted back to full-resolution pixels -- but capped, so
-    # a large winning coarse_k (a big diagonal banner) can't blow the
-    # dilation out to cover half the page. A real case hit coarse_k=49 at
-    # work resolution and computed a 48px dilation radius at full
-    # resolution, turning a ~10% candidate into a 45% final mask. The cap
-    # is tighter than it looks: on the same case, capping at 3% of the
-    # short side (19px) still bridged a row of small, individually-benign
-    # noise dots (leftover text-row residue) into one wide blob the
-    # structural-bar filter no longer recognized once merged (its fill
-    # ratio gets diluted by the real gaps between the original dots).
-    # 1.2% keeps dilation below the observed merge distance.
-    dilate_k = max(3, min(int(round((coarse_k / work_scale) * 0.35)), int(round(min(h, w) * 0.012))))
+    # stroke), converted back to full-resolution pixels.
+    dilate_k = max(3, int(round((coarse_k / work_scale) * 0.35)))
     mask = cv2.dilate(candidate, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_k, dilate_k)))
-    # Dilation can merge a cluster of small, individually-harmless noise
-    # blobs (e.g. scattered text-row residue) into one wide, solid-looking
-    # shape that the pre-dilation filter above never saw -- observed on
-    # the same real case, immediately below where the pre-dilation filter
-    # correctly removed a genuine structural bar. Reapplying it here
-    # catches those in their merged form.
-    mask = _strip_structural_bars(mask)
 
     coverage = float(np.mean(mask > 0))
     if coverage < 1e-6:
