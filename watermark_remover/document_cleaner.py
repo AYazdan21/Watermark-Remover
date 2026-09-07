@@ -319,7 +319,12 @@ def clean_document_auto(
             is_dark_text = (gray < final_thresh - 15)
             grid_pixels = (clean_grid > 0) & (~is_dark_text)
             cleaned[grid_pixels] = [line_render_val, line_render_val, line_render_val]
-        else:
+        elif grid_contrast > 0:
+            # At 0% contrast there's nothing to enhance, and gridline pixels
+            # are already preserved pixel-for-pixel by the blend-time
+            # protection above -- redrawing here would discard that and
+            # flatten them to one uniform value, contradicting the "0% =
+            # Original faint shade" setting described in the UI.
             darkened = grid_mask_dilated & (gray < med_val) & (gray >= final_thresh - 20)
             cleaned[darkened] = [line_render_val, line_render_val, line_render_val]
 
