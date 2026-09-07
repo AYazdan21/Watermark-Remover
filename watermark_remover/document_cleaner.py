@@ -214,20 +214,43 @@ def clean_document_auto(
         tophat_h = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5)))
         tophat_v = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1)))
 
+        # tophat_h/v feed two different consumers below with different
+        # safety margins, so they need different amounts of watermark
+        # suppression:
+        #  - The peaks/snap path already requires a genuinely long
+        #    continuous run in aggregate (_max_run_frac), so it's fairly
+        #    watermark-resistant on its own -- over-suppressing here costs
+        #    real, faint gridlines their only local evidence right where
+        #    they cross the watermark, breaking otherwise-continuous lines
+        #    into visibly gapped fragments (confirmed on a real spreadsheet
+        #    with light native gridlines).
+        #  - The baseline local-structure layer below has no such
+        #    safeguard -- any long-enough dark run is trusted -- so it
+        #    needs the watermark suppressed much more generously there, or
+        #    the watermark's own letters get preserved as if they were
+        #    gridlines (confirmed as a real regression on that same
+        #    spreadsheet: wm_mask's own boundary, deliberately tight for
+        #    erasure purposes, missed enough of the watermark's true
+        #    extent to let this happen).
+        tophat_h_strict = tophat_h.copy()
+        tophat_v_strict = tophat_v.copy()
         if localized:
-            # Watermark strokes crossing a gridline register as dark
-            # blackhat features too, "bridging" gaps into spurious extra
-            # line fragments. Suppressing them here keeps line detection
-            # reading the real grid instead of the watermark's shape.
             tophat_h[wm_mask > 0] = 0
             tophat_v[wm_mask > 0] = 0
+            wm_suppress = cv2.dilate(wm_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (21, 21))) > 0
+            tophat_h_strict[wm_suppress] = 0
+            tophat_v_strict[wm_suppress] = 0
 
         h_cand = (tophat_h >= 7).astype(np.uint8) * 255
         v_cand = (tophat_v >= 7).astype(np.uint8) * 255
+        h_cand_strict = (tophat_h_strict >= 7).astype(np.uint8) * 255
+        v_cand_strict = (tophat_v_strict >= 7).astype(np.uint8) * 255
 
         # Use 25px minimum continuous length to filter out character stems and commas
         h_lines = cv2.morphologyEx(h_cand, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1)))
         v_lines = cv2.morphologyEx(v_cand, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 25)))
+        h_lines_strict = cv2.morphologyEx(h_cand_strict, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1)))
+        v_lines_strict = cv2.morphologyEx(v_cand_strict, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 25)))
 
         # Baseline protection: every locally-detected border segment,
         # regardless of whether it lines up into a page-spanning grid.
@@ -237,8 +260,9 @@ def clean_document_auto(
         # the handful of borders that happen to align into a global grid
         # were ever protected from erasure, leaving every other field box
         # border to be blended away or unmixed through like plain paper.
-        h_lines_c = cv2.morphologyEx(h_lines, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 1)))
-        v_lines_c = cv2.morphologyEx(v_lines, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15)))
+        # Uses the strictly-suppressed candidates (see above).
+        h_lines_c = cv2.morphologyEx(h_lines_strict, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 1)))
+        v_lines_c = cv2.morphologyEx(v_lines_strict, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15)))
         local_struct_mask = cv2.bitwise_or(h_lines_c, v_lines_c)
         grid_mask_dilated = cv2.dilate(local_struct_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)), iterations=1) > 0
         clean_lines = gray[grid_mask_dilated & (gray > 190) & (gray < 240)]
