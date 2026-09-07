@@ -10,6 +10,28 @@ from .localizer import is_trusted, localize_watermark
 from .unmixer import unmix_region
 
 
+def _max_run_frac(line: np.ndarray) -> float:
+    """Longest single contiguous True run in a 1D boolean array, as a
+    fraction of its length. A real border is one continuous stroke, so its
+    row/column projection count comes from a single long run. A repeating
+    diagonal watermark's text can accumulate the *same total* projection
+    count across a row/column purely from several short, scattered letter
+    strokes -- this distinguishes the two so peak detection isn't fooled
+    into treating watermark text as a border (confirmed on a real
+    document: a tiled "sitename.net" watermark's own strokes summed past
+    the width threshold and got snapped into fabricated straight dividers
+    with no counterpart in the source image)."""
+    if line.size == 0:
+        return 0.0
+    padded = np.concatenate(([0], (line > 0).astype(np.int8), [0]))
+    d = np.diff(padded)
+    starts = np.where(d == 1)[0]
+    ends = np.where(d == -1)[0]
+    if len(starts) == 0:
+        return 0.0
+    return float(np.max(ends - starts)) / line.size
+
+
 def auto_detect_document_profile(img_np):
     """
     Analyzes document image geometry, lines, margins, and paper colors to automatically
@@ -28,8 +50,13 @@ def auto_detect_document_profile(img_np):
     h_proj = np.sum(h_lines > 0, axis=1)
     v_proj = np.sum(v_lines > 0, axis=0)
 
-    row_peaks = [y for y in range(1, h - 1) if h_proj[y] > w * 0.25 and h_proj[y] >= h_proj[y - 1] and h_proj[y] >= h_proj[y + 1]]
-    col_peaks = [x for x in range(1, w - 1) if v_proj[x] > h * 0.25 and v_proj[x] >= v_proj[x - 1] and v_proj[x] >= v_proj[x + 1]]
+    # A real border's projection count comes from one continuous stroke; a
+    # repeating diagonal watermark's text can reach the same total count
+    # from several short, scattered letter strokes. Requiring the row/col's
+    # longest single run to itself be a substantial fraction of the page
+    # dimension rejects the latter (see _max_run_frac).
+    row_peaks = [y for y in range(1, h - 1) if h_proj[y] > w * 0.25 and h_proj[y] >= h_proj[y - 1] and h_proj[y] >= h_proj[y + 1] and _max_run_frac(h_lines[y, :]) >= 0.15]
+    col_peaks = [x for x in range(1, w - 1) if v_proj[x] > h * 0.25 and v_proj[x] >= v_proj[x - 1] and v_proj[x] >= v_proj[x + 1] and _max_run_frac(v_lines[:, x]) >= 0.15]
 
     has_table = (len(row_peaks) >= 3 and len(col_peaks) >= 2)
 
@@ -202,45 +229,74 @@ def clean_document_auto(
         h_lines = cv2.morphologyEx(h_cand, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1)))
         v_lines = cv2.morphologyEx(v_cand, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 25)))
 
+        # Baseline protection: every locally-detected border segment,
+        # regardless of whether it lines up into a page-spanning grid.
+        # On a dense form built from many independent field boxes (not one
+        # uniform table), most real borders never reach the width/height
+        # fraction the peak search below requires -- without this, only
+        # the handful of borders that happen to align into a global grid
+        # were ever protected from erasure, leaving every other field box
+        # border to be blended away or unmixed through like plain paper.
+        h_lines_c = cv2.morphologyEx(h_lines, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 1)))
+        v_lines_c = cv2.morphologyEx(v_lines, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15)))
+        local_struct_mask = cv2.bitwise_or(h_lines_c, v_lines_c)
+        grid_mask_dilated = cv2.dilate(local_struct_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)), iterations=1) > 0
+        clean_lines = gray[grid_mask_dilated & (gray > 190) & (gray < 240)]
+        med_val = int(np.median(clean_lines)) if len(clean_lines) > 0 else 210
+
         if snap_gridlines:
+            # Same distinction as auto_detect_document_profile above: only
+            # trust a peak whose projection count is backed by one long
+            # continuous run, not several short strokes (e.g. a tiled
+            # watermark's own lettering) that merely sum past the
+            # threshold -- otherwise the snap step below fabricates a
+            # straight line through the watermark's shape.
             h_proj = np.sum(h_lines > 0, axis=1)
             row_peaks = []
             for y in range(1, h - 1):
-                if h_proj[y] > w * 0.25 and h_proj[y] >= h_proj[y - 1] and h_proj[y] >= h_proj[y + 1]:
+                if h_proj[y] > w * 0.25 and h_proj[y] >= h_proj[y - 1] and h_proj[y] >= h_proj[y + 1] and _max_run_frac(h_lines[y, :]) >= 0.15:
                     if not row_peaks or y - row_peaks[-1] > 3:
                         row_peaks.append(y)
 
             v_proj = np.sum(v_lines > 0, axis=0)
             col_peaks = []
             for x in range(1, w - 1):
-                if v_proj[x] > h * 0.25 and v_proj[x] >= v_proj[x - 1] and v_proj[x] >= v_proj[x + 1]:
+                if v_proj[x] > h * 0.25 and v_proj[x] >= v_proj[x - 1] and v_proj[x] >= v_proj[x + 1] and _max_run_frac(v_lines[:, x]) >= 0.15:
                     if not col_peaks or x - col_peaks[-1] > 6:
                         col_peaks.append(x)
 
             if len(row_peaks) >= 2 or len(col_peaks) >= 2:
                 thick_px = 2 if line_thickness == "2px (Standard)" else 1
-                min_x = min(col_peaks) if col_peaks else 0
-                max_x = max(col_peaks) if col_peaks else w - 1
-                min_y = min(row_peaks) if row_peaks else 0
-                max_y = max(row_peaks) if row_peaks else h - 1
-
+                # Snap each peak to a single crisp row/column, but only where
+                # a real border segment was actually detected nearby (with a
+                # small morphological close to bridge anti-aliasing gaps) --
+                # never draw the unconditional min-to-max span across the
+                # whole page. A form where different rows have different box
+                # layouts has no continuous border across that full span;
+                # drawing one anyway fabricates a line with no counterpart in
+                # the source image (confirmed on a real reported document).
+                bridge_h = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 1))
+                bridge_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 9))
                 for y in row_peaks:
-                    cv2.line(clean_grid, (min_x, y), (max_x, y), 255, thick_px)
+                    band = np.any(h_lines[max(0, y - 1):y + 2, :] > 0, axis=0).astype(np.uint8) * 255
+                    band = cv2.morphologyEx(band[None, :], cv2.MORPH_CLOSE, bridge_h)[0] > 0
+                    clean_grid[y, band] = 255
+                    if thick_px == 2 and y + 1 < h:
+                        clean_grid[y + 1, band] = 255
                 for x in col_peaks:
-                    cv2.line(clean_grid, (x, min_y), (x, max_y), 255, thick_px)
+                    band = np.any(v_lines[:, max(0, x - 1):x + 2] > 0, axis=1).astype(np.uint8) * 255
+                    band = cv2.morphologyEx(band[:, None], cv2.MORPH_CLOSE, bridge_v)[:, 0] > 0
+                    clean_grid[band, x] = 255
+                    if thick_px == 2 and x + 1 < w:
+                        clean_grid[band, x + 1] = 255
 
-                grid_mask_dilated = clean_grid > 0
+                # Union with the baseline local mask above -- snapping only
+                # ever adds crisply-repositioned versions of real borders on
+                # top of it, never replaces the broader protection.
+                grid_mask_dilated = grid_mask_dilated | (clean_grid > 0)
                 clean_lines = gray[(clean_grid > 0) & (gray > 180) & (gray < 240)]
-                med_val = int(np.median(clean_lines)) if len(clean_lines) > 0 else 220
+                med_val = int(np.median(clean_lines)) if len(clean_lines) > 0 else med_val
                 snapped_grid_applied = True
-
-        if not snapped_grid_applied:
-            h_lines_c = cv2.morphologyEx(h_lines, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 1)))
-            v_lines_c = cv2.morphologyEx(v_lines, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15)))
-            grid_mask = cv2.bitwise_or(h_lines_c, v_lines_c)
-            grid_mask_dilated = cv2.dilate(grid_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)), iterations=1) > 0
-            clean_lines = gray[grid_mask_dilated & (gray > 190) & (gray < 240)]
-            med_val = int(np.median(clean_lines)) if len(clean_lines) > 0 else 210
 
     # Build target background buffer
     target_bg = np.zeros_like(img_np)
