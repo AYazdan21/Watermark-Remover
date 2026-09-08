@@ -1,6 +1,7 @@
 import gradio as gr
 
 from . import doc_core
+from .doc_debug import debug_detect
 from .photo_inpainter import (
     auto_detect_watermark,
     auto_detect_and_inpaint,
@@ -217,6 +218,56 @@ def build_ui():
                     save_dataset_chk,
                 ],
                 outputs=[doc_output, doc_status],
+            )
+
+        # ==========================================
+        # TAB 1b: Method 3 Detection Debugger
+        # ==========================================
+        with gr.Tab("🔍 M3 Detection Debug"):
+            gr.Markdown(
+                """
+                Runs the exact same detection → SAM refinement → false-positive filter
+                pipeline Method 3 uses for removal, but **removes nothing** -- it shows
+                you what was found and why each candidate was kept or thrown out, so a
+                "nothing was removed" result can be told apart from a "everything was
+                found but rejected" result or a "SAM's mask is wrong" result, which all
+                look identical from the cleaned output alone.
+                """
+            )
+            with gr.Row():
+                with gr.Column(scale=5):
+                    debug_input = gr.Image(label="1. Upload Document Image", type="pil")
+                    with gr.Row():
+                        debug_conf_slider = gr.Slider(
+                            minimum=0.05,
+                            maximum=0.9,
+                            value=0.15,
+                            step=0.01,
+                            label="Segmentation Confidence",
+                            info="Same control as Method 3 -- lower catches fainter/smaller regions, at the cost of more false positives to filter.",
+                        )
+                    with gr.Row():
+                        debug_model_select = gr.Dropdown(
+                            choices=["Both (Union)", "YOLO11s", "YOLO11 General"],
+                            value="Both (Union)",
+                            label="Segmentation Model",
+                        )
+                        debug_use_sam_chk = gr.Checkbox(
+                            label="Refine with SAM",
+                            value=True,
+                            info="Uncheck to see the raw YOLO boxes without mask refinement.",
+                        )
+                    btn_debug_detect = gr.Button("🔍 Run Detection", variant="primary", size="lg")
+
+                with gr.Column(scale=5):
+                    debug_output = gr.Image(label="2. Detections (boxes + accepted/rejected masks)", type="pil")
+
+            debug_report = gr.Markdown(value="Upload a document and click Run Detection.")
+
+            btn_debug_detect.click(
+                fn=debug_detect,
+                inputs=[debug_input, debug_conf_slider, debug_model_select, debug_use_sam_chk],
+                outputs=[debug_output, debug_report],
             )
 
         # ==========================================
