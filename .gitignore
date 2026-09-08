@@ -43,3 +43,9 @@ wm_dataset_out/
 
 # Scraped third-party document images (provenance/licensing varies; keep local)
 images_scraped/
+
+# Real evaluation images staged locally (provenance varies; README is tracked)
+wm_testset/images/
+
+# Colab upload bundle (regenerable from wm_dataset_out/)
+wm_dataset_colab.zip

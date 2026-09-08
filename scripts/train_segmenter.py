@@ -573,6 +573,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                      help=f"Absolute IoU/Dice delta between val_synthetic and test_real above "
                           f"which the domain-gap warning is printed loudly. Default: "
                           f"{DEFAULT_GAP_THRESHOLD}")
+    ap.add_argument("--no-test-eval", action="store_true",
+                     help="Skip the real test set entirely (do not require --test-dir to exist "
+                          "or be labelled). Use when the real images have no ground-truth labels "
+                          "yet: accuracy metrics are undefined without labels, so train first and "
+                          "inspect predictions qualitatively with scripts/predict_overlays.py.")
     ap.add_argument("--skip-train-eval", action="store_true",
                      help="Skip evaluating on the images/train split (the memorization sanity "
                           "check). Evaluation still runs on val_synthetic and test_real.")
@@ -630,7 +635,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             data_dir / val_rel, data_dir / labels_rel_from_images_rel(val_rel),
             "val split (--data-dir)",
         )
-        discover_split(test_dir / "images", test_dir / "labels", "test set (--test-dir)")
+        if not args.no_test_eval:
+            discover_split(test_dir / "images", test_dir / "labels", "test set (--test-dir)")
     except WMScriptError as exc:
         print(f"\nERROR: {exc}")
         return 1
@@ -713,12 +719,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             val_native_yaml, args, run_dir,
         )
 
-        test_native_yaml = build_data_yaml(test_dir, "images", "images", tmp_dir, "eval_test")
-        domains["test_real"] = evaluate_domain(
-            model, "test_real", "test_real (real, hand-labelled, held out)",
-            test_dir / "images", test_dir / "labels",
-            test_native_yaml, args, run_dir,
-        )
+        if not args.no_test_eval:
+            test_native_yaml = build_data_yaml(test_dir, "images", "images", tmp_dir, "eval_test")
+            domains["test_real"] = evaluate_domain(
+                model, "test_real", "test_real (real, hand-labelled, held out)",
+                test_dir / "images", test_dir / "labels",
+                test_native_yaml, args, run_dir,
+            )
+        else:
+            print("\n--no-test-eval: skipping the real test set. Accuracy metrics are "
+                  "undefined without ground-truth labels; inspect predictions on real "
+                  "images qualitatively with scripts/predict_overlays.py instead.")
 
     except WMScriptError as exc:
         print(f"\nERROR: {exc}")
