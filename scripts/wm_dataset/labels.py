@@ -53,9 +53,20 @@ def resolve_threshold(alpha_map: np.ndarray) -> float:
     return max(ABS_FLOOR, REL_PEAK_FRAC * peak)
 
 # Drop components smaller than this fraction of the image area -- removes
-# JPEG/blur speckle noise near threshold and any near-zero-area slivers left
-# by rotation clipping at the image border.
-MIN_AREA_FRAC = 0.00035
+# near-zero-area slivers left by rotation clipping at the image border.
+#
+# Deliberately tiny, and capped by MIN_AREA_ABS_CAP below. An earlier value
+# of 0.00035 was measured to delete real watermarks: a component's size
+# tracks the STAMP scale, while a page-area fraction tracks the PAGE, and
+# those are independent. On a 1267x1746 page carrying a small tiled mark
+# (scale 0.071) the floor came to 774px while each real glyph component was
+# 637px, so every one was dropped and a clearly-watermarked positive got an
+# empty label. Note also that the alpha map is built at composite time,
+# BEFORE JPEG encoding, so there is no compression speckle here to filter --
+# this only needs to catch degenerate border slivers.
+MIN_AREA_FRAC = 0.00002
+# Never require more than this many pixels, regardless of page size.
+MIN_AREA_ABS_CAP = 120.0
 # Polygon simplification strength, as a fraction of the contour perimeter.
 EPSILON_FRAC = 0.01
 # A simplified polygon with fewer than this many vertices after clamping
@@ -84,7 +95,7 @@ def mask_to_polygons(mask: np.ndarray, min_area_frac: float = MIN_AREA_FRAC,
     full-frame mask rather than per-instance crops.
     """
     h, w = mask.shape[:2]
-    min_area = max(20.0, min_area_frac * h * w)
+    min_area = min(MIN_AREA_ABS_CAP, max(20.0, min_area_frac * h * w))
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     polygons: List[np.ndarray] = []

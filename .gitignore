@@ -35,3 +35,6 @@ wm_backgrounds/
 Thumbs.db
 .vscode/
 .idea/
+
+# Generated synthetic training samples (reproducible from generate.py + seed)
+wm_dataset_out/
