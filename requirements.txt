@@ -6,6 +6,11 @@ Pillow==9.5.0
 simple-lama-inpainting==0.1.2
 ultralytics==8.4.142
 
+# Synthetic Persian document backgrounds (scripts/wm_dataset/gen_persian_docs.py)
+# -- required for correct RTL shaping/joining of Persian glyphs rendered via PIL.
+arabic-reshaper==3.0.1
+python-bidi==0.6.11
+
 # Torch: install the CUDA build matching your GPU/driver from
 # https://pytorch.org/get-started/locally/ (this project was developed against
 # torch==2.6.0+cu124 / torchvision==0.21.0+cu124). CPU-only fallback:
