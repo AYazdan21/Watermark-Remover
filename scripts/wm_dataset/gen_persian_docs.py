@@ -676,12 +676,97 @@ def gen_spreadsheet(rng: random.Random, style: PageStyle) -> Image.Image:
     return im
 
 
+def gen_dense_text(rng: random.Random, style: "PageStyle") -> Image.Image:
+    """A wall of Persian body text -- contract / report / terms-and-conditions
+    page, filled edge to edge with minimal whitespace.
+
+    Exists specifically to train the watermark-under-heavy-text case. That is
+    the failure mode of the current detector: it finds marks sitting on clear
+    paper but misses every instance overlapping dense body text, because the
+    text destroys the local contrast the mark would otherwise stand out
+    against. A background corpus of mostly-whitespace pages would never teach
+    a model to handle it, so this archetype deliberately leaves the mark
+    almost nowhere clean to land.
+    """
+    im, d = _new_canvas(style)
+    w, h, m = style.w, style.h, style.margin
+
+    two_col = rng.random() < 0.35
+    body_size = max(11, style.base_font_size - rng.choice([4, 6, 8]))
+    body_font = get_font(body_size, family_idx=style.font_family)
+    head_font = get_font(style.base_font_size + 2, bold=True, family_idx=style.font_family)
+    line_gap = rng.uniform(1.25, 1.5)  # tight leading -> more text per page
+
+    org = rng.choice(ORG_NAMES)
+    y = m
+    draw_rtl(d, (w - m, y), org, head_font, style.accent, anchor="ra")
+    y += head_font.size * 1.8
+    d.line([(m, y), (w - m, y)], fill=style.rule, width=1)
+    y += head_font.size * 0.8
+
+    if two_col:
+        gutter = int(w * 0.045)
+        col_w = (w - 2 * m - gutter) / 2
+        columns = [(w - m, col_w), (w - m - col_w - gutter, col_w)]
+    else:
+        columns = [(w - m, w - 2 * m)]
+
+    sec_font = get_font(body_size + 3, bold=True, family_idx=style.font_family)
+    for right_x, col_w in columns:
+        cy = y
+        # Fill until the column runs out of vertical room, rather than a fixed
+        # paragraph count -- page sizes vary, and the point is a full page.
+        guard = 0
+        while cy < h - m - body_font.size * 2 and guard < 60:
+            guard += 1
+            if rng.random() < 0.22:
+                draw_rtl(d, (right_x, cy), rng.choice(SECTION_TITLES), sec_font, style.accent, anchor="ra")
+                cy += sec_font.size * 1.7
+                continue
+            # BODY_SENTENCES carries an "{org}" placeholder; the other
+            # archetypes format it, and skipping that renders a literal
+            # "{org}" into the page.
+            text = " ".join(rng.choices(BODY_SENTENCES, k=rng.randint(2, 4))).format(org=org)
+            cy = draw_rtl_paragraph(d, text, body_font, right_x, cy, col_w, style.rule, line_gap=line_gap)
+            cy += body_font.size * rng.uniform(0.3, 0.8)
+
+    return im
+
+
+SECTION_TITLES = [
+    "ماده ۱ - موضوع قرارداد",
+    "ماده ۲ - مدت اجرا",
+    "ماده ۳ - مبلغ و نحوه پرداخت",
+    "ماده ۴ - تعهدات طرفین",
+    "ماده ۵ - فسخ قرارداد",
+    "تبصره",
+    "شرایط عمومی",
+    "توضیحات تکمیلی",
+]
+
+
 ARCHETYPES = {
     "tender_notice": gen_tender_notice,
     "tabular_document": gen_tabular_document,
     "form_layout": gen_form_layout,
     "plain_letter": gen_plain_letter,
     "spreadsheet": gen_spreadsheet,
+    "dense_text": gen_dense_text,
+}
+
+# Relative frequency in a generated corpus. Text-heavy archetypes are
+# oversampled on purpose: the watermark-over-dense-text case is both the
+# hardest for the model and the one the current detector fails, so it needs
+# the most coverage. The near-empty archetypes (form/spreadsheet grids) still
+# appear because they are common in the real workload and provide the
+# structural-line variety, just at lower weight.
+ARCHETYPE_WEIGHTS = {
+    "dense_text": 4,
+    "tender_notice": 3,
+    "plain_letter": 3,
+    "tabular_document": 2,
+    "form_layout": 1,
+    "spreadsheet": 1,
 }
 
 
@@ -730,7 +815,12 @@ def generate_one(rng: random.Random, archetype: Optional[str] = None) -> Tuple[I
 def generate_dataset(out_dir: Path, count: int, seed: int = 0) -> List[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     rng = random.Random(seed)
-    names = list(ARCHETYPES.keys())
+    # Weighted round-robin rather than uniform: deterministic for a given
+    # seed, but honours ARCHETYPE_WEIGHTS so text-heavy pages dominate.
+    names: List[str] = []
+    for nm, wt in ARCHETYPE_WEIGHTS.items():
+        names.extend([nm] * wt)
+    names = names or list(ARCHETYPES.keys())
     written: List[Path] = []
     for i in range(count):
         archetype = names[i % len(names)]

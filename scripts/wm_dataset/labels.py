@@ -68,7 +68,22 @@ MIN_AREA_FRAC = 0.00002
 # Never require more than this many pixels, regardless of page size.
 MIN_AREA_ABS_CAP = 120.0
 # Polygon simplification strength, as a fraction of the contour perimeter.
-EPSILON_FRAC = 0.01
+#
+# Measured against the true alpha mask over 40 real samples (polygon-raster
+# vs. thresholded alpha, median IoU / mean vertices per image):
+#     0.0100 -> 0.707 IoU,  1078 verts   (the original value)
+#     0.0050 -> 0.812 IoU,  1653 verts
+#     0.0020 -> 0.888 IoU,  2425 verts
+#     0.0010 -> 0.925 IoU,  3050 verts   <-- chosen
+#     0.0005 -> 0.941 IoU,  3298 verts
+# At 0.01 roughly 30% of every labelled region was not actually watermark,
+# which silently caps how precise a model trained on it can ever be -- and
+# this model's output feeds pixel-level alpha-unmixing, so that error
+# propagates into the removal step. 0.001 buys most of the available
+# accuracy; past it the curve flattens while vertex count keeps climbing.
+# ~3000 verts/image is spread over every instance on the page (about 28 per
+# polygon on a dense lattice), which YOLO-seg rasterises at load time anyway.
+EPSILON_FRAC = 0.001
 # A simplified polygon with fewer than this many vertices after clamping
 # isn't a usable region.
 MIN_VERTICES = 3

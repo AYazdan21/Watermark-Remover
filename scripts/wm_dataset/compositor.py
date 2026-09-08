@@ -16,7 +16,11 @@ and the darkening compounds the way real overlapping ink would.
 
 Placement patterns, chosen to match what's actually observed on real
 watermarked documents (see module docstring context in the task brief):
-  - single:   one large instance (~0.5-1.0x page width), mild rotation.
+  - single:   one large instance (~0.6-1.0x page width), mild rotation --
+              the "big mark centred on the page" case of the source document.
+  - oversize: one instance scaled PAST the page (1.05-1.9x) and off-centre,
+              so the frame clips it -- the subtitle drops off the bottom, or
+              part of the logo runs past an edge. Trains partial-mark recall.
   - corner:   one small instance tucked near a page corner.
   - lattice:  a regular tiled grid of small instances (~0.06-0.14x page
               width), the "repeated small mark" case, usually near-horizontal.
@@ -48,7 +52,7 @@ DEFAULT_ASSETS_DIR = Path(__file__).resolve().parents[3] / "_wm_extract_delivera
 LOGO_NAME = "ariatender_logo_hammer_text.png"
 SUBTITLE_NAME = "ariatender_subtitle_persian.png"
 
-PATTERNS = ("single", "lattice", "diagonal", "corner")
+PATTERNS = ("single", "oversize", "lattice", "diagonal", "corner")
 
 
 @functools.lru_cache(maxsize=4)
@@ -178,10 +182,31 @@ def _paste_over(canvas_rgb: np.ndarray, canvas_a: np.ndarray,
 
 def _placements_single(w: int, h: int, rng: np.random.Generator
                         ) -> Tuple[List[Tuple[float, float, float, float]], float]:
-    frac = rng.uniform(0.45, 0.95)
+    frac = rng.uniform(0.60, 1.00)
     angle = rng.uniform(-8, 8) if rng.random() < 0.7 else rng.uniform(20, 45) * rng.choice([-1, 1])
     cx = rng.uniform(0.5 - 0.15, 0.5 + 0.15) * w
     cy = rng.uniform(0.5 - 0.15, 0.5 + 0.15) * h
+    return [(cx, cy, frac, angle)], frac
+
+
+def _placements_oversize(w: int, h: int, rng: np.random.Generator
+                          ) -> Tuple[List[Tuple[float, float, float, float]], float]:
+    """One mark scaled BEYOND the page, so it is clipped by the frame.
+
+    Real scans and screenshots are frequently cropped mid-watermark: the
+    subtitle line falls off the bottom, or one end of the logo runs past the
+    edge. A model trained only on fully-visible marks learns the whole
+    silhouette as one rigid template and degrades on partial ones -- which is
+    exactly the case a user hits when they crop a region out of a page. The
+    label follows the visible part only, since the compositor's alpha map
+    records what actually landed inside the frame.
+    """
+    frac = rng.uniform(1.05, 1.9)
+    angle = rng.uniform(-10, 10) if rng.random() < 0.75 else rng.uniform(15, 40) * rng.choice([-1, 1])
+    # Push the centre well off the middle so the clipping is asymmetric --
+    # sometimes the subtitle is gone, sometimes half the logo.
+    cx = rng.uniform(0.20, 0.80) * w
+    cy = rng.uniform(0.18, 0.82) * h
     return [(cx, cy, frac, angle)], frac
 
 
@@ -231,7 +256,7 @@ def _choose_pattern(rng: np.random.Generator, pattern: Optional[str]) -> str:
         return pattern
     # Roughly matches observed real-world mix: large single marks and
     # lattices are both common; corner and diagonal are less so.
-    return str(rng.choice(PATTERNS, p=[0.35, 0.30, 0.15, 0.20]))
+    return str(rng.choice(PATTERNS, p=[0.30, 0.18, 0.24, 0.16, 0.12]))
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +287,8 @@ def composite(background: Image.Image, stamp: Image.Image,
         placements, base_frac = _placements_single(w, h, rng)
     elif chosen_pattern == "corner":
         placements, base_frac = _placements_corner(w, h, rng)
+    elif chosen_pattern == "oversize":
+        placements, base_frac = _placements_oversize(w, h, rng)
     elif chosen_pattern == "lattice":
         placements, base_frac = _placements_lattice(w, h, rng, diagonal=False)
     else:  # diagonal
