@@ -53,3 +53,6 @@ wm_dataset_colab.zip
 # regenerated synthetic dataset + background pool (large, reproducible from scripts)
 wm_backgrounds_v2/
 wm_dataset_v2/
+
+# ultralytics writes its settings/assets here
+Ultralytics/
