@@ -23,12 +23,14 @@ from PIL import Image
 from .segmenter import detect_watermark_masks
 
 # Box outline color by source model -- lets you see at a glance whether a
-# detection came from the checkpoint that's strong on tiled marks or the
-# one that's strong on isolated stamps/logos (see segmenter.py's module
-# docstring: the two are complementary, not redundant).
+# detection came from the checkpoint that's strong on tiled marks, the one
+# that's strong on isolated stamps/logos (see segmenter.py's module
+# docstring: the two are complementary, not redundant), or the finetuned
+# direct-mask model that is now the primary path.
 _SOURCE_COLORS = {
     "YOLO11s": (66, 133, 244),  # blue
     "YOLO11 General": (255, 152, 0),  # orange
+    "Finetuned (AriaTender)": (0, 150, 136),  # teal
 }
 _DEFAULT_BOX_COLOR = (128, 128, 128)
 _ACCEPT_TINT = (52, 199, 89)  # green
@@ -36,7 +38,7 @@ _REJECT_TINT = (255, 59, 48)  # red
 _TINT_STRENGTH = 0.45
 
 
-def debug_detect(doc_image, conf: float = 0.15, model_choice: str = "Both (Union)", use_sam: bool = True):
+def debug_detect(doc_image, conf: float = 0.25, model_choice: str = "Finetuned (AriaTender)", use_sam: bool = True):
     """Runs detection+refinement+filtering and returns (overlay_image,
     markdown_report). Never runs removal -- this is inspection only.
 
@@ -105,8 +107,12 @@ def _render_report(meta: dict, conf: float, model_choice: str, use_sam: bool) ->
             f"⚠️ **No detections at all** at confidence ≥ {conf} with model(s) = *{model_choice}*. "
             "This means Method 3 removed nothing because it never saw a candidate in the first place -- "
             "not that a candidate was found and rejected. Try lowering the confidence slider first; if that "
-            "doesn't help, try switching model choice (`YOLO11s` vs `YOLO11 General`) -- the two checkpoints "
-            "are trained on different watermark styles and are not redundant with each other."
+            "doesn't help, try switching model choice. `Finetuned (AriaTender)` is the primary path now -- "
+            "trained directly on this project's synthetic AriaTender composites at imgsz 1024, it detects "
+            "real watermark instances the two legacy detectors miss entirely (measured 72/73 hit rate over "
+            "wm_testset/images at conf=0.25). `YOLO11s` / `YOLO11 General` remain available for watermark "
+            "styles outside that training set -- the two are trained on different styles and are not "
+            "redundant with each other, but neither is the first thing to reach for anymore."
         )
         return "\n".join(lines)
 
@@ -134,7 +140,10 @@ def _render_report(meta: dict, conf: float, model_choice: str, use_sam: bool) ->
         )
 
     lines.append(
-        "\n\n**Legend:** blue box = YOLO11s, orange box = YOLO11 General, gray = unrecognized source &nbsp;|&nbsp; "
-        "green tint = accepted instance mask, red tint = rejected instance mask (SAM's refined shape, not the raw box)."
+        "\n\n**Legend:** blue box = YOLO11s, orange box = YOLO11 General, teal box = Finetuned (AriaTender), "
+        "gray = unrecognized source &nbsp;|&nbsp; "
+        "green tint = accepted instance mask, red tint = rejected instance mask (SAM's refined shape for the "
+        "two legacy models, or the model's own direct mask for Finetuned (AriaTender) -- SAM never runs on "
+        "that path)."
     )
     return "\n".join(lines)

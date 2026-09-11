@@ -24,6 +24,25 @@ Persian web form with a thin-ring shield watermark, 70 = tender notice,
   the box's area for a real watermark word. This is what makes it safe
   to unmix inside the mask without flattening real text: a box alone is
   much too coarse for that.
+
+A third, later-added model -- weights/best-yolo11-seg.pt, display name
+"Finetuned (AriaTender)" -- takes a different shape entirely: it is a
+yolo11n-SEG checkpoint (task=segment, single class {0: 'watermark'})
+finetuned on synthetic composites of the two AriaTender marks over varied
+Persian document pages, trained at imgsz 1024. Because it is a
+segmentation model, it emits an instance mask directly per detection --
+there is no axis-aligned box to refine, so this path skips _detect_boxes
+and _sam_refine entirely (see detect_watermark_masks's routing and
+_detect_seg_masks below). Measured over the 73 real images in
+wm_testset/images at conf 0.25/imgsz 1024: 72/73 produced detections,
+mean 19 instances/image, mean page coverage 4.96%, and visual inspection
+of 6 pages confirmed masks land on the watermark glyph/wordmark without
+firing on body text or table rules -- the failure mode that made the two
+legacy detectors' raw output unusable before MobileSAM+the filter below
+were added (they flagged 40/40 clean pages). Because this model's masks
+hug the glyph strokes far more tightly than a MobileSAM box envelope
+does, the opaque-ink cutoff below needs a separate, higher value on this
+path -- see _SEG_OPAQUE_REJECT_ALPHA.
 """
 
 import os
@@ -45,8 +64,19 @@ _MODEL_FILES = {
 }
 _SAM_WEIGHTS = "mobile_sam.pt"
 
+# The finetuned direct-mask model. Unlike the two legacy checkpoints above
+# (which sit at BASE_DIR root), this one lives in a weights/ subdirectory --
+# it was dropped there separately after the legacy models were already
+# wired up, so its path is assembled on its own rather than added to
+# _MODEL_FILES (which every legacy caller assumes resolves directly under
+# BASE_DIR).
+_SEG_MODEL_NAME = "Finetuned (AriaTender)"
+_SEG_MODEL_REL_PATH = os.path.join("weights", "best-yolo11-seg.pt")
+_SEG_IMGSZ = 1024  # trained at this resolution on Colab -- do not change.
+
 _yolo_models = {}
 _sam_model = None
+_seg_model = None
 
 
 def get_yolo_model(name: str):
@@ -70,6 +100,20 @@ def get_sam_model():
             raise FileNotFoundError(f"SAM weights {path} not found.")
         _sam_model = SAM(path)
     return _sam_model
+
+
+def get_seg_model():
+    """Lazily loads and caches the finetuned direct-mask watermark model
+    (weights/best-yolo11-seg.pt, display name "Finetuned (AriaTender)").
+    Mirrors get_yolo_model's caching pattern, but resolves under weights/
+    instead of BASE_DIR -- see _SEG_MODEL_REL_PATH."""
+    global _seg_model
+    if _seg_model is None:
+        path = os.path.join(BASE_DIR, _SEG_MODEL_REL_PATH)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Finetuned segmentation model file {path} not found.")
+        _seg_model = YOLO(path)
+    return _seg_model
 
 
 # --- box union + NMS -----------------------------------------------------
@@ -183,6 +227,50 @@ def _boxes_to_masks(img_np: np.ndarray, boxes: np.ndarray):
     return masks
 
 
+# --- direct-mask model path (finetuned) ----------------------------------
+
+
+def _detect_seg_masks(img_np: np.ndarray, conf: float, device: str):
+    """Runs the finetuned direct-mask model at imgsz=1024 (the resolution
+    it was trained at -- unlike _detect_boxes's hardcoded imgsz=800 for the
+    two legacy detectors, which is untouched by this addition) and returns
+    parallel lists: masks (list of uint8 HxW, 0/255, already resized to
+    the input image and thresholded), boxes (Nx4), scores, source (the
+    model's display name, repeated -- there is only one model on this
+    path, so _nms's cross-model dedup has nothing to do).
+
+    ultralytics returns `masks.data` as an (N, h', w') array at the model's
+    own (letterboxed) inference resolution, NOT the input image size --
+    confirmed directly (a 713x788 input produced masks at 928x1024). Each
+    mask is resized to the full image with nearest-neighbor (matching how
+    _sam_refine resizes its own raw masks) and re-thresholded at >127
+    since resizing a binary mask can otherwise leave edge pixels at
+    intermediate values.
+    """
+    h, w = img_np.shape[:2]
+    model = get_seg_model()
+    results = model(img_np, conf=conf, imgsz=_SEG_IMGSZ, device=device, verbose=False)
+    r = results[0]
+
+    if r.masks is None or len(r.masks.data) == 0:
+        return [], np.zeros((0, 4)), np.zeros((0,)), []
+
+    raw = r.masks.data.cpu().numpy()  # (N, h', w'), model resolution
+    boxes = r.boxes.xyxy.cpu().numpy()
+    scores = r.boxes.conf.cpu().numpy()
+
+    masks = []
+    for m in raw:
+        m8 = (m.astype(np.uint8)) * 255
+        if m8.shape[:2] != (h, w):
+            m8 = cv2.resize(m8, (w, h), interpolation=cv2.INTER_NEAREST)
+        m8 = ((m8 > 127).astype(np.uint8)) * 255
+        masks.append(m8)
+
+    sources = [_SEG_MODEL_NAME] * len(masks)
+    return masks, boxes, scores, sources
+
+
 # --- local background + false-positive filter ----------------------------
 
 _RING_PX = 20
@@ -276,6 +364,36 @@ _MIN_INK_PIXELS = 15
 # stops the single worst observed failure mode.
 _MAX_INSTANCE_COVERAGE = 0.05
 
+# A second opaque-ink cutoff, used only on the finetuned direct-mask path
+# (model_choice == "Finetuned (AriaTender)"). _OPAQUE_REJECT_ALPHA above
+# was calibrated against MobileSAM envelopes, which -- being a coarse
+# box-derived shape -- include a lot of untouched paper between glyph
+# strokes, so a real watermark's median ink alpha stays low even where it
+# crosses darker content (this module's own docstring already notes the
+# pull-up effect on the tender notice: 0.73 where the mark's SAM mask
+# shared pixels with real black body text). This model's masks hug the
+# glyph strokes themselves, so that same pull-up effect is much stronger:
+# running _classify_instance with 0.78 over all 1389 instances found
+# across the 73 wm_testset/images images (conf=0.25, imgsz=1024) rejected
+# 238 (17.1%), and on 3 of those images EVERY instance was rejected --
+# i.e. Method 3 would silently do nothing on them. Rendering
+# accepted/rejected overlays and inspecting them directly showed the
+# rejected instances sit squarely on the watermark -- parts of the
+# shield/gavel glyph, and the wordmark where it crosses a dark red
+# decorative border -- not on real content; they are not false positives.
+# The measured alpha distribution (p50 0.257, p90 0.834, p99 0.980) shows
+# the 0.78-0.96 band is exactly where mark-over-dark-content cases land,
+# so 0.97 keeps them while still rejecting fully-opaque instances (>=0.97),
+# which are the ones most likely to be solid real ink rather than a
+# translucent overlay, mirroring the reasoning behind 0.78 above just
+# recalibrated for this model's tighter masks. The deeper safety net on
+# this path is doc_segment.py's existing per-pixel `is_dark_ink` guard,
+# which excludes dark-ink pixels from modification regardless of which
+# instance's mask covers them -- a per-pixel rule that is strictly better
+# than this per-instance alpha rule, so a higher alpha cutoff here costs
+# little: anything that slips through still can't touch real dark ink.
+_SEG_OPAQUE_REJECT_ALPHA = 0.97
+
 
 def _ink_subset(residual: np.ndarray, mask_bool: np.ndarray) -> np.ndarray:
     """The subset of an instance's mask most likely to be actual mark/ink,
@@ -292,11 +410,18 @@ def _ink_subset(residual: np.ndarray, mask_bool: np.ndarray) -> np.ndarray:
     return ink_bool
 
 
-def _classify_instance(img_np: np.ndarray, inst_mask: np.ndarray):
+def _classify_instance(img_np: np.ndarray, inst_mask: np.ndarray, opaque_reject_alpha: float = _OPAQUE_REJECT_ALPHA):
     """Computes all false-positive-filter signals for one instance.
     Returns a dict with median_ink_alpha, bg_saturation, page_coverage,
     accepted (bool), and the background/mark_color already computed
-    (reused later so doc_segment.py never has to fit the model twice)."""
+    (reused later so doc_segment.py never has to fit the model twice).
+
+    `opaque_reject_alpha`: the cutoff applied to median_ink_alpha below.
+    Defaults to _OPAQUE_REJECT_ALPHA (the legacy MobileSAM-envelope
+    calibration) so every existing caller is unaffected; the direct-mask
+    path passes _SEG_OPAQUE_REJECT_ALPHA instead -- see that constant's
+    comment for why the two models need different cutoffs.
+    """
     mask_bool = inst_mask > 0
     h, w = inst_mask.shape[:2]
     page_coverage = float(np.sum(mask_bool)) / float(h * w)
@@ -331,8 +456,8 @@ def _classify_instance(img_np: np.ndarray, inst_mask: np.ndarray):
     reject_reason = None
     if bg_saturation >= _CHROME_SATURATION_REJECT:
         reject_reason = f"colored UI chrome (local background saturation {bg_saturation:.0f} >= {_CHROME_SATURATION_REJECT:.0f})"
-    elif median_ink_alpha >= _OPAQUE_REJECT_ALPHA:
-        reject_reason = f"opaque ink (median alpha {median_ink_alpha:.2f} >= {_OPAQUE_REJECT_ALPHA})"
+    elif median_ink_alpha >= opaque_reject_alpha:
+        reject_reason = f"opaque ink (median alpha {median_ink_alpha:.2f} >= {opaque_reject_alpha})"
 
     return {
         "median_ink_alpha": median_ink_alpha,
@@ -363,13 +488,33 @@ def detect_watermark_masks(img_np: np.ndarray, conf: float = 0.15, model_choice:
         used_sam      -- bool, whether SAM refinement actually ran
         sam_error     -- str or None
         detect_ms, refine_ms, total_ms
+
+    ``model_choice == "Finetuned (AriaTender)"`` routes to a completely
+    different, simpler path: that model emits instance masks directly (see
+    _detect_seg_masks), so _detect_boxes and _sam_refine are skipped
+    entirely -- there is no box stage and no separate refinement stage to
+    time, so ``refine_ms`` is always 0.0 and ``used_sam`` is always False
+    on this path. Everything downstream (the false-positive filter, the
+    accepted-mask union, the returned shape) is identical to the legacy
+    paths; only the opaque-ink cutoff passed into _classify_instance
+    differs (see _SEG_OPAQUE_REJECT_ALPHA).
     """
     t0 = time.time()
     h, w = img_np.shape[:2]
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    boxes, scores, sources = _detect_boxes(img_np, conf, model_choice, device)
-    detect_ms = (time.time() - t0) * 1000
+    is_seg_path = model_choice == _SEG_MODEL_NAME
+    opaque_reject_alpha = _SEG_OPAQUE_REJECT_ALPHA if is_seg_path else _OPAQUE_REJECT_ALPHA
+
+    if is_seg_path:
+        masks, boxes, scores, sources = _detect_seg_masks(img_np, conf, device)
+        detect_ms = (time.time() - t0) * 1000
+        used_sam = False
+        sam_error = None
+        refine_ms = 0.0
+    else:
+        boxes, scores, sources = _detect_boxes(img_np, conf, model_choice, device)
+        detect_ms = (time.time() - t0) * 1000
 
     empty_mask = np.zeros((h, w), dtype=np.uint8)
     if len(boxes) == 0:
@@ -379,19 +524,22 @@ def detect_watermark_masks(img_np: np.ndarray, conf: float = 0.15, model_choice:
             "detect_ms": detect_ms, "refine_ms": 0.0, "total_ms": detect_ms,
         }
 
-    t1 = time.time()
-    sam_error = None
-    used_sam = False
-    if use_sam:
-        raw_masks, sam_error = _sam_refine(img_np, boxes, device)
-        if sam_error is None:
-            used_sam = True
-            masks = raw_masks
+    if not is_seg_path:
+        t1 = time.time()
+        sam_error = None
+        used_sam = False
+        if use_sam:
+            raw_masks, sam_error = _sam_refine(img_np, boxes, device)
+            if sam_error is None:
+                used_sam = True
+                masks = raw_masks
+            else:
+                masks = _boxes_to_masks(img_np, boxes)
         else:
             masks = _boxes_to_masks(img_np, boxes)
-    else:
-        masks = _boxes_to_masks(img_np, boxes)
-    refine_ms = (time.time() - t1) * 1000
+        refine_ms = (time.time() - t1) * 1000
+    # else: masks/used_sam/sam_error/refine_ms already set above by the
+    # direct-mask branch -- nothing left to refine.
 
     instances = []
     accepted_mask = np.zeros((h, w), dtype=np.uint8)
@@ -407,7 +555,7 @@ def detect_watermark_masks(img_np: np.ndarray, conf: float = 0.15, model_choice:
             })
             continue
 
-        cls = _classify_instance(img_np, inst_mask)
+        cls = _classify_instance(img_np, inst_mask, opaque_reject_alpha=opaque_reject_alpha)
         instances.append({
             "box": tuple(float(v) for v in box), "conf": float(conf_i), "source": src,
             "mask": inst_mask, "accepted": cls["accepted"], "reject_reason": cls["reject_reason"],

@@ -194,8 +194,8 @@ def clean_document(
     stamp_filter: str = "None (Standard)",
     grid_contrast: int = 50,
     smart_auto: bool = True,
-    seg_conf: float = 0.15,
-    seg_model: str = "Both (Union)",
+    seg_conf: float = 0.25,
+    seg_model: str = "Finetuned (AriaTender)",
     seg_use_sam: bool = True,
     save_dataset: bool = True,
 ):
@@ -207,6 +207,14 @@ def clean_document(
     METHOD_THRESHOLD (M1), METHOD_UNMIX (M2), or METHOD_SEGMENT (M3, delegated
     to ``doc_segment.py``). ``save_dataset`` gates ALL writes to ``dataset/``
     -- when False, nothing is written, for any method.
+
+    ``seg_conf``/``seg_model``/``seg_use_sam`` are M3-only and passed straight
+    through to ``doc_segment.clean_document_segment``. Their defaults now
+    point at the finetuned direct-mask model ("Finetuned (AriaTender)") at
+    conf=0.25 -- see that function's docstring and segmenter.py's
+    _SEG_OPAQUE_REJECT_ALPHA comment for the measurements behind both
+    numbers. ``seg_use_sam`` only affects the two legacy model choices; the
+    finetuned model never runs SAM.
     """
     if method == METHOD_SEGMENT:
         if doc_image is None:

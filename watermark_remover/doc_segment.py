@@ -27,11 +27,21 @@ from .segmenter import detect_watermark_masks, local_ring_background
 from .unmixer import unmix_region
 
 
-def clean_document_segment(img_np: np.ndarray, conf: float = 0.15, model_choice: str = "Both (Union)", use_sam: bool = True):
+def clean_document_segment(img_np: np.ndarray, conf: float = 0.25, model_choice: str = "Finetuned (AriaTender)", use_sam: bool = True):
     """Removes watermark instances found by detect_watermark_masks, one
     instance at a time, using a per-instance local background (never a
     page-wide flat estimate -- see segmenter.local_ring_background) and
     unmix_region's alpha-unmixing (never a flat replace).
+
+    Defaults now point at the finetuned direct-mask model
+    ("Finetuned (AriaTender)") at conf=0.25 -- the confidence measured
+    clean over all 73 wm_testset/images pages (see segmenter.py's
+    _SEG_OPAQUE_REJECT_ALPHA comment for the supporting numbers); the old
+    default of conf=0.15 was tuned for the two legacy box detectors, not
+    this model. ``use_sam`` is kept in the signature for the two legacy
+    model choices ("Both (Union)", "YOLO11s", "YOLO11 General") -- it is
+    ignored on the finetuned path, which never runs SAM at all (see
+    detect_watermark_masks's routing).
 
     Returns (cleaned_np uint8 HxWx3, status) where status is a dict with:
       instances_found, instances_accepted, instances_rejected,
@@ -86,7 +96,18 @@ def clean_document_segment(img_np: np.ndarray, conf: float = 0.15, model_choice:
     n_rejected = meta["rejected_count"]
     coverage_pct = meta["coverage"] * 100
 
-    sam_note = "MobileSAM refinement" if meta["used_sam"] else f"raw YOLO boxes (SAM unavailable: {meta['sam_error']})" if meta["sam_error"] else "raw YOLO boxes (SAM disabled)"
+    # The finetuned model emits masks directly -- there is no YOLO-box /
+    # MobileSAM stage on that path at all (see segmenter.detect_watermark_masks's
+    # routing), so the two legacy sam_note phrasings ("MobileSAM refinement" /
+    # "raw YOLO boxes ...") would both misdescribe what actually ran.
+    if model_choice == "Finetuned (AriaTender)":
+        sam_note = "the finetuned model's own direct instance masks (no YOLO boxes, no SAM)"
+    elif meta["used_sam"]:
+        sam_note = "MobileSAM refinement"
+    elif meta["sam_error"]:
+        sam_note = f"raw YOLO boxes (SAM unavailable: {meta['sam_error']})"
+    else:
+        sam_note = "raw YOLO boxes (SAM disabled)"
     message = (
         f"Method 3 (segmentation-driven): {n_found} candidate instance(s) detected, "
         f"{n_accepted} accepted / {n_rejected} rejected by the opaque-ink filter, "

@@ -158,21 +158,22 @@ def build_ui():
                             seg_conf_slider = gr.Slider(
                                 minimum=0.05,
                                 maximum=0.9,
-                                value=0.15,
+                                value=0.25,
                                 step=0.01,
                                 label="Segmentation Confidence",
-                                info="Lower catches fainter/smaller watermark regions; higher is stricter.",
+                                info="Lower catches fainter/smaller watermark regions; higher is stricter. 0.25 measured clean for Finetuned (AriaTender).",
                             )
                         with gr.Row():
                             seg_model_select = gr.Dropdown(
-                                choices=["Both (Union)", "YOLO11s", "YOLO11 General"],
-                                value="Both (Union)",
+                                choices=["Finetuned (AriaTender)", "Both (Union)", "YOLO11s", "YOLO11 General"],
+                                value="Finetuned (AriaTender)",
                                 label="Segmentation Model",
+                                info="Finetuned (AriaTender) emits masks directly and is the recommended default; the other three are legacy box detectors refined with SAM.",
                             )
                             seg_use_sam_chk = gr.Checkbox(
                                 label="Refine with SAM",
                                 value=True,
-                                info="Uses Mobile-SAM to refine detected boxes into precise masks before deblending.",
+                                info="Uses Mobile-SAM to refine detected boxes into precise masks before deblending. Ignored when Segmentation Model = Finetuned (AriaTender), which emits masks directly and never runs SAM.",
                             )
 
                     save_dataset_chk = gr.Checkbox(
@@ -241,21 +242,22 @@ def build_ui():
                         debug_conf_slider = gr.Slider(
                             minimum=0.05,
                             maximum=0.9,
-                            value=0.15,
+                            value=0.25,
                             step=0.01,
                             label="Segmentation Confidence",
                             info="Same control as Method 3 -- lower catches fainter/smaller regions, at the cost of more false positives to filter.",
                         )
                     with gr.Row():
                         debug_model_select = gr.Dropdown(
-                            choices=["Both (Union)", "YOLO11s", "YOLO11 General"],
-                            value="Both (Union)",
+                            choices=["Finetuned (AriaTender)", "Both (Union)", "YOLO11s", "YOLO11 General"],
+                            value="Finetuned (AriaTender)",
                             label="Segmentation Model",
+                            info="Finetuned (AriaTender) emits masks directly and is the recommended default; the other three are legacy box detectors refined with SAM.",
                         )
                         debug_use_sam_chk = gr.Checkbox(
                             label="Refine with SAM",
                             value=True,
-                            info="Uncheck to see the raw YOLO boxes without mask refinement.",
+                            info="Uncheck to see the raw YOLO boxes without mask refinement. Ignored when Segmentation Model = Finetuned (AriaTender), which emits masks directly and never runs SAM.",
                         )
                     btn_debug_detect = gr.Button("🔍 Run Detection", variant="primary", size="lg")
 
