@@ -34,7 +34,7 @@ import functools
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
@@ -42,7 +42,7 @@ from PIL import Image, ImageEnhance, ImageFilter
 import asset_prep
 
 # ---------------------------------------------------------------------------
-# Stamp loading
+# Stamp loading / mark registry
 # ---------------------------------------------------------------------------
 
 # _wm_extract_deliverable lives one level above the repo root (sibling of
@@ -51,27 +51,165 @@ import asset_prep
 DEFAULT_ASSETS_DIR = Path(__file__).resolve().parents[3] / "_wm_extract_deliverable"
 LOGO_NAME = "ariatender_logo_hammer_text.png"
 SUBTITLE_NAME = "ariatender_subtitle_persian.png"
+WIDE_WORDMARK_NAME = "ariatender_wide_wordmark.png"
 
 PATTERNS = ("single", "oversize", "lattice", "diagonal", "corner")
 
+STACKED_MARK_ID = "ariatender_stacked"
+WIDE_MARK_ID = "ariatender_wide"
 
-@functools.lru_cache(maxsize=4)
-def load_base_stamp(assets_dir: Optional[str] = None) -> Image.Image:
-    """Loads and cleans the two source crops into one combined RGBA stamp.
 
-    Cached (by assets_dir) since asset_prep's cleaning involves connected-
-    component analysis and Gaussian feathering -- no need to redo it per
-    sample. Returns a fresh copy per call so callers can mutate freely.
+@dataclass(frozen=True)
+class MarkSpec:
+    """Everything pattern-placement needs to know about one watermark mark,
+    besides its pixels (those are loaded separately and cached -- see
+    load_base_stamp). Bundling this per-mark, rather than as compositor-wide
+    globals, is what makes it possible to run two visually unrelated marks
+    (a near-square stacked logo and a 4.3:1 wide wordmark) through the same
+    placement code without one mark's calibration leaking into the other's.
+
+    scale_ranges: pattern name -> (frac_lo, frac_hi), where frac is the
+    fraction of PAGE WIDTH the placed instance's width should span. This is
+    mark-specific because the same frac produces a very different apparent
+    size (and, for a wide mark, a very different HEIGHT) depending on the
+    mark's own aspect ratio -- see ariatender_wide's scale_ranges below for
+    the concrete case this bit.
+
+    pattern_weights: pattern name -> relative weight, normalised at
+    selection time (so callers need not pre-normalise, e.g. when only
+    overriding one entry).
     """
-    d = Path(assets_dir) if assets_dir else DEFAULT_ASSETS_DIR
-    logo = asset_prep.clean_stamp(str(d / LOGO_NAME))
-    subtitle = asset_prep.clean_stamp(str(d / SUBTITLE_NAME))
+
+    mark_id: str
+    scale_ranges: Dict[str, Tuple[float, float]]
+    pattern_weights: Dict[str, float]
+
+
+def _load_stacked_mark(assets_dir: Path) -> Image.Image:
+    """Loads the original AriaTender mark: logo crop + Persian subtitle crop,
+    each background-removed (real alpha already usable) and cleaned by
+    clean_stamp, then stacked at their real relative geometry."""
+    logo = asset_prep.clean_stamp(str(assets_dir / LOGO_NAME))
+    subtitle = asset_prep.clean_stamp(str(assets_dir / SUBTITLE_NAME))
     return asset_prep.combine_stamp(logo, subtitle)
 
 
-def get_stamp(assets_dir: Optional[str] = None) -> Image.Image:
-    """Public entry point: a fresh copy of the base stamp, safe to mutate."""
-    return load_base_stamp(assets_dir).copy()
+def _load_wide_mark(assets_dir: Path) -> Image.Image:
+    """Loads the new wide wordmark. Unlike the stacked mark's source crops,
+    this file is a raw, fully-opaque screenshot (alpha=255 everywhere), so
+    it goes through extract_flat_screenshot_stamp -- a colour-difference
+    extraction, not an alpha-based one -- rather than clean_stamp. See that
+    function's docstring in asset_prep.py for why, and for the measured
+    calibration constants."""
+    return asset_prep.extract_flat_screenshot_stamp(str(assets_dir / WIDE_WORDMARK_NAME))
+
+
+_MARK_LOADERS: Dict[str, Callable[[Path], Image.Image]] = {
+    STACKED_MARK_ID: _load_stacked_mark,
+    WIDE_MARK_ID: _load_wide_mark,
+}
+
+# Registered marks. Each entry's scale_ranges/pattern_weights are the single
+# source of truth for how that mark gets placed -- composite() no longer
+# hard-codes any of this.
+MARK_REGISTRY: Dict[str, MarkSpec] = {
+    # The original mark. These ranges/weights are copied verbatim from the
+    # pre-registry hard-coded values in _placements_*/_choose_pattern, so
+    # registering it changes nothing about existing dataset generation.
+    STACKED_MARK_ID: MarkSpec(
+        mark_id=STACKED_MARK_ID,
+        scale_ranges={
+            "single": (0.60, 1.00),
+            "oversize": (1.05, 1.9),
+            "corner": (0.12, 0.28),
+            "lattice": (0.07, 0.14),
+            "diagonal": (0.07, 0.14),
+        },
+        pattern_weights={
+            "single": 0.30,
+            "oversize": 0.18,
+            "lattice": 0.24,
+            "diagonal": 0.16,
+            "corner": 0.12,
+        },
+    ),
+    # The new wide wordmark. Its aspect ratio is ~4.3:1 (2163x501 after
+    # extraction) versus the stacked mark's near-square ~1:1 -- and `frac`
+    # controls WIDTH as a fraction of page width, so the same frac used for
+    # the stacked mark would make this mark's height collapse. Concretely:
+    # at the stacked mark's lattice frac of 0.07, on a 1240px-wide page this
+    # mark would render 87px wide and only ~20px tall -- illegible, and
+    # small enough that individual glyph components risk being dropped by
+    # labels.MIN_AREA_ABS_CAP (120px). Every range below is shifted up
+    # relative to the stacked mark's so this mark stays legible and its
+    # components stay comfortably above that floor at every pattern's
+    # smallest end. pattern_weights are left equal to the stacked mark's --
+    # no measurement suggests real documents favour one pattern differently
+    # for a wide wordmark versus a stacked logo, so there is no basis yet
+    # to diverge; revisit if/when real wide-mark documents are collected.
+    WIDE_MARK_ID: MarkSpec(
+        mark_id=WIDE_MARK_ID,
+        scale_ranges={
+            "single": (0.55, 1.00),
+            "oversize": (1.05, 1.90),
+            "corner": (0.20, 0.42),
+            "lattice": (0.14, 0.28),
+            "diagonal": (0.14, 0.28),
+        },
+        pattern_weights={
+            "single": 0.30,
+            "oversize": 0.18,
+            "lattice": 0.24,
+            "diagonal": 0.16,
+            "corner": 0.12,
+        },
+    ),
+}
+
+
+@functools.lru_cache(maxsize=8)
+def load_base_stamp(mark_id: str = STACKED_MARK_ID, assets_dir: Optional[str] = None) -> Image.Image:
+    """Loads and cleans one registered mark's source asset(s) into an RGBA
+    stamp.
+
+    Cached (by (mark_id, assets_dir)) since both extraction paths --
+    clean_stamp's connected-component analysis and feathering, and
+    extract_flat_screenshot_stamp's distance-transform paper estimate -- are
+    expensive enough that redoing them per sample would dominate dataset
+    generation time. Returns a fresh copy per call so callers can mutate
+    freely without corrupting the cached original.
+    """
+    if mark_id not in _MARK_LOADERS:
+        raise ValueError(f"unknown mark_id {mark_id!r}; registered marks: {sorted(_MARK_LOADERS)}")
+    d = Path(assets_dir) if assets_dir else DEFAULT_ASSETS_DIR
+    return _MARK_LOADERS[mark_id](d)
+
+
+def get_stamp(assets_dir: Optional[str] = None, mark_id: Optional[str] = None) -> Image.Image:
+    """Public entry point: a fresh copy of one registered mark's stamp,
+    safe to mutate.
+
+    `assets_dir` stays the first positional parameter (rather than
+    `mark_id`) so existing calls of the form `get_stamp(assets_dir)`
+    continue to return the original stacked mark unchanged -- that call
+    shape predates the mark registry and other code still uses it.
+    """
+    resolved_mark_id = mark_id if mark_id is not None else STACKED_MARK_ID
+    return load_base_stamp(resolved_mark_id, assets_dir).copy()
+
+
+def resolve_mark(mark: Union["MarkSpec", str, None]) -> "MarkSpec":
+    """Normalises the `mark` argument composite() accepts (a MarkSpec, a
+    registered mark_id string, or None) to a MarkSpec. None means "the
+    original mark", both for backwards compatibility with callers written
+    before a second mark existed and because it's a sensible default."""
+    if mark is None:
+        return MARK_REGISTRY[STACKED_MARK_ID]
+    if isinstance(mark, MarkSpec):
+        return mark
+    if mark not in MARK_REGISTRY:
+        raise ValueError(f"unknown mark {mark!r}; registered marks: {sorted(MARK_REGISTRY)}")
+    return MARK_REGISTRY[mark]
 
 
 # ---------------------------------------------------------------------------
@@ -103,9 +241,25 @@ def _rotate_scale_stamp(stamp: Image.Image, scale: float, angle_deg: float,
 
     r, g, b, a = resized.split()
     if tint_shift:
-        ink = np.array(r, dtype=np.int16)  # r == g == b (flat gray ink)
-        ink = np.clip(ink + tint_shift, 0, 255).astype(np.uint8)
-        r = g = b = Image.fromarray(ink)
+        # Additive per-channel offset, applied to R/G/B independently. The
+        # previous implementation read ONLY the red channel and wrote it
+        # back to all three ("ink = r; r=g=b=ink") -- a harmless no-op for
+        # the stacked mark, whose ink genuinely is flat gray (r==g==b
+        # already), but for the wide wordmark's pink shield that would have
+        # thrown away the red/green/blue difference entirely and rendered
+        # every instance of it grey. Shifting each channel by the same
+        # scalar preserves each pixel's chroma (its channel-to-channel
+        # differences) while still moving its overall brightness, which is
+        # what "the whole scan is a bit lighter/darker" should mean.
+        rgb = np.dstack([
+            np.array(r, dtype=np.int16),
+            np.array(g, dtype=np.int16),
+            np.array(b, dtype=np.int16),
+        ])
+        rgb = np.clip(rgb + tint_shift, 0, 255).astype(np.uint8)
+        r = Image.fromarray(rgb[..., 0])
+        g = Image.fromarray(rgb[..., 1])
+        b = Image.fromarray(rgb[..., 2])
     if opacity_mult != 1.0:
         a_arr = np.array(a, dtype=np.float32) * opacity_mult
         a = Image.fromarray(np.clip(a_arr, 0, 255).astype(np.uint8))
@@ -180,16 +334,16 @@ def _paste_over(canvas_rgb: np.ndarray, canvas_a: np.ndarray,
 # in final-image pixel coordinates for one sample.
 # ---------------------------------------------------------------------------
 
-def _placements_single(w: int, h: int, rng: np.random.Generator
+def _placements_single(w: int, h: int, rng: np.random.Generator, frac_range: Tuple[float, float]
                         ) -> Tuple[List[Tuple[float, float, float, float]], float]:
-    frac = rng.uniform(0.60, 1.00)
+    frac = rng.uniform(*frac_range)
     angle = rng.uniform(-8, 8) if rng.random() < 0.7 else rng.uniform(20, 45) * rng.choice([-1, 1])
     cx = rng.uniform(0.5 - 0.15, 0.5 + 0.15) * w
     cy = rng.uniform(0.5 - 0.15, 0.5 + 0.15) * h
     return [(cx, cy, frac, angle)], frac
 
 
-def _placements_oversize(w: int, h: int, rng: np.random.Generator
+def _placements_oversize(w: int, h: int, rng: np.random.Generator, frac_range: Tuple[float, float]
                           ) -> Tuple[List[Tuple[float, float, float, float]], float]:
     """One mark scaled BEYOND the page, so it is clipped by the frame.
 
@@ -201,7 +355,7 @@ def _placements_oversize(w: int, h: int, rng: np.random.Generator
     label follows the visible part only, since the compositor's alpha map
     records what actually landed inside the frame.
     """
-    frac = rng.uniform(1.05, 1.9)
+    frac = rng.uniform(*frac_range)
     angle = rng.uniform(-10, 10) if rng.random() < 0.75 else rng.uniform(15, 40) * rng.choice([-1, 1])
     # Push the centre well off the middle so the clipping is asymmetric --
     # sometimes the subtitle is gone, sometimes half the logo.
@@ -210,9 +364,9 @@ def _placements_oversize(w: int, h: int, rng: np.random.Generator
     return [(cx, cy, frac, angle)], frac
 
 
-def _placements_corner(w: int, h: int, rng: np.random.Generator
+def _placements_corner(w: int, h: int, rng: np.random.Generator, frac_range: Tuple[float, float]
                         ) -> Tuple[List[Tuple[float, float, float, float]], float]:
-    frac = rng.uniform(0.12, 0.28)
+    frac = rng.uniform(*frac_range)
     angle = rng.uniform(-10, 10)
     margin = 0.06
     corner = rng.integers(0, 4)
@@ -221,9 +375,10 @@ def _placements_corner(w: int, h: int, rng: np.random.Generator
     return [(cx, cy, frac, angle)], frac
 
 
-def _placements_lattice(w: int, h: int, rng: np.random.Generator, diagonal: bool
+def _placements_lattice(w: int, h: int, rng: np.random.Generator, diagonal: bool,
+                         frac_range: Tuple[float, float]
                          ) -> Tuple[List[Tuple[float, float, float, float]], float]:
-    frac = rng.uniform(0.07, 0.14)
+    frac = rng.uniform(*frac_range)
     grid_angle = rng.uniform(30, 50) * rng.choice([-1, 1]) if diagonal else rng.uniform(-6, 6)
     stamp_w = frac * w
     spacing_x = stamp_w * rng.uniform(1.6, 2.4)
@@ -250,13 +405,19 @@ def _placements_lattice(w: int, h: int, rng: np.random.Generator, diagonal: bool
     return placements, frac
 
 
-def _choose_pattern(rng: np.random.Generator, pattern: Optional[str]) -> str:
+def _choose_pattern(rng: np.random.Generator, pattern: Optional[str],
+                     pattern_weights: Dict[str, float]) -> str:
     if pattern is not None:
         assert pattern in PATTERNS, f"unknown pattern {pattern!r}"
         return pattern
     # Roughly matches observed real-world mix: large single marks and
-    # lattices are both common; corner and diagonal are less so.
-    return str(rng.choice(PATTERNS, p=[0.30, 0.18, 0.24, 0.16, 0.12]))
+    # lattices are both common; corner and diagonal are less so. Weights
+    # come from the active MarkSpec rather than being fixed here, so a
+    # differently-shaped mark can prefer a different pattern mix (today
+    # both registered marks share the same mix -- see MARK_REGISTRY).
+    weights = np.array([pattern_weights[p] for p in PATTERNS], dtype=np.float64)
+    probs = weights / weights.sum()
+    return str(rng.choice(PATTERNS, p=probs))
 
 
 # ---------------------------------------------------------------------------
@@ -267,13 +428,22 @@ def composite(background: Image.Image, stamp: Image.Image,
               rng: np.random.Generator, pattern: Optional[str] = None,
               opacity_mult: Optional[float] = None,
               tint_shift: Optional[int] = None,
+              mark: Union["MarkSpec", str, None] = None,
               ) -> Tuple[Image.Image, np.ndarray, Dict[str, Any]]:
     """Composites `stamp` onto `background` using a sampled placement
     pattern. Returns (composited_rgb [PIL RGB], alpha_map [float32 HxW,
     0..1], meta dict).
 
     `background` must be a PIL Image (any mode; converted to RGB).
-    `stamp` is the RGBA stamp from get_stamp().
+    `stamp` is the RGBA stamp from get_stamp() -- note this is NOT derived
+    from `mark` automatically; callers pick the stamp pixels and the mark's
+    placement calibration separately (generate.py loads each registered
+    mark's stamp once and passes both together per sample).
+    `mark` selects which MarkSpec's scale_ranges/pattern_weights govern this
+    call: a MarkSpec, a registered mark_id string, or None for the original
+    stacked mark (see resolve_mark) -- this is what lets composite() place
+    a mark whose aspect ratio and pattern preferences differ from the
+    original without composite() itself knowing about specific marks.
     `opacity_mult` / `tint_shift`, if given, fix those sample-level values
     (used by the calibration self-test); otherwise opacity_mult is sampled
     ~U(0.5, 1.5) around the calibrated base alpha as specified in the task
@@ -282,17 +452,19 @@ def composite(background: Image.Image, stamp: Image.Image,
     bg = background.convert("RGB")
     w, h = bg.size
 
-    chosen_pattern = _choose_pattern(rng, pattern)
+    mark_spec = resolve_mark(mark)
+    chosen_pattern = _choose_pattern(rng, pattern, mark_spec.pattern_weights)
+    frac_range = mark_spec.scale_ranges[chosen_pattern]
     if chosen_pattern == "single":
-        placements, base_frac = _placements_single(w, h, rng)
+        placements, base_frac = _placements_single(w, h, rng, frac_range)
     elif chosen_pattern == "corner":
-        placements, base_frac = _placements_corner(w, h, rng)
+        placements, base_frac = _placements_corner(w, h, rng, frac_range)
     elif chosen_pattern == "oversize":
-        placements, base_frac = _placements_oversize(w, h, rng)
+        placements, base_frac = _placements_oversize(w, h, rng, frac_range)
     elif chosen_pattern == "lattice":
-        placements, base_frac = _placements_lattice(w, h, rng, diagonal=False)
+        placements, base_frac = _placements_lattice(w, h, rng, diagonal=False, frac_range=frac_range)
     else:  # diagonal
-        placements, base_frac = _placements_lattice(w, h, rng, diagonal=True)
+        placements, base_frac = _placements_lattice(w, h, rng, diagonal=True, frac_range=frac_range)
 
     if opacity_mult is None:
         opacity_mult = float(rng.uniform(0.5, 1.5))
@@ -335,6 +507,7 @@ def composite(background: Image.Image, stamp: Image.Image,
     out_rgb = Image.fromarray(np.clip(canvas_rgb * 255.0, 0, 255).astype(np.uint8), "RGB")
 
     meta: Dict[str, Any] = {
+        "mark_id": mark_spec.mark_id,
         "pattern": chosen_pattern,
         "base_scale_frac": base_frac,
         "opacity_mult": opacity_mult,

@@ -1,6 +1,12 @@
-"""CLI driver: composites the AriaTender stamp onto background documents and
-writes a YOLO-seg dataset (images, polygon labels, continuous alpha maps,
-and a JSONL metadata sidecar).
+"""CLI driver: composites AriaTender watermark stamp(s) onto background
+documents and writes a YOLO-seg dataset (images, polygon labels, continuous
+alpha maps, and a JSONL metadata sidecar).
+
+Two marks are registered in compositor.MARK_REGISTRY: the original
+"ariatender_stacked" (logo + Persian subtitle) and "ariatender_wide" (the
+wide two-tone wordmark). By default every positive sample draws from a
+mix of both (equally weighted) -- see --marks / --mark-weights / --mark-id
+below to change that.
 
 Backgrounds are read from a plain directory of images (glob'd recursively) --
 deliberately NOT importing backgrounds.py / gen_persian_docs.py, which are
@@ -97,13 +103,35 @@ def _maybe_resize_background(img: Image.Image, rng: np.random.Generator,
 def generate_dataset(out_dir: Path, backgrounds_dir: Optional[Path], n_samples: int,
                       val_frac: float = 0.15, negative_frac: float = 0.15,
                       seed: int = 0, jpeg_quality_range=(55, 95),
-                      assets_dir: Optional[str] = None, mark_id: str = "ariatender",
+                      assets_dir: Optional[str] = None,
+                      mark_ids: Optional[List[str]] = None,
+                      mark_weights: Optional[List[float]] = None,
                       class_name: str = "watermark") -> dict:
     out_dir = Path(out_dir)
     _guard_output_path(out_dir)
 
     rng = np.random.default_rng(seed)
-    stamp = compositor.get_stamp(assets_dir)
+
+    # Which mark(s) this run can draw from. Defaulting to both registered
+    # marks (rather than just the original) is deliberate: the whole point
+    # of this multi-mark extension is that a real dataset build should mix
+    # them, not that every caller must remember to ask for both.
+    if mark_ids is None:
+        mark_ids = list(compositor.MARK_REGISTRY.keys())
+    if mark_weights is None:
+        mark_weights = [1.0] * len(mark_ids)
+    if len(mark_weights) != len(mark_ids):
+        raise ValueError(f"mark_weights ({len(mark_weights)}) must match mark_ids ({len(mark_ids)})")
+    mark_probs = np.array(mark_weights, dtype=np.float64)
+    mark_probs = mark_probs / mark_probs.sum()
+
+    # Load every requested stamp ONCE, up front. load_base_stamp is already
+    # lru_cache'd, but re-extracting per sample would still mean re-running
+    # (and re-copying) the extraction machinery n_samples times instead of
+    # len(mark_ids) times -- for extract_flat_screenshot_stamp specifically,
+    # that's a distance-transform over a 2184x534 image, not something to
+    # redo thousands of times when the source pixels never change.
+    stamps = {mid: compositor.get_stamp(assets_dir, mark_id=mid) for mid in mark_ids}
 
     bg_paths = collect_background_paths(backgrounds_dir)
     use_placeholders = len(bg_paths) == 0
@@ -127,6 +155,7 @@ def generate_dataset(out_dir: Path, backgrounds_dir: Optional[Path], n_samples: 
     n_negative = 0
     n_empty_positive = 0
     empty_positive_ids = []
+    mark_counts = {mid: 0 for mid in mark_ids}
     for i in range(n_samples):
         split = "val" if i in val_ids else "train"
         is_negative = rng.random() < negative_frac
@@ -144,10 +173,14 @@ def generate_dataset(out_dir: Path, backgrounds_dir: Optional[Path], n_samples: 
             n_negative += 1
             composited = bg.convert("RGB")
             alpha_map = np.zeros((bg.height, bg.width), dtype=np.float32)
-            comp_meta = {"pattern": None, "opacity_mult": None, "tint_shift": 0,
+            sample_mark_id = None
+            comp_meta = {"mark_id": None, "pattern": None, "opacity_mult": None, "tint_shift": 0,
                          "base_scale_frac": None, "n_instances": 0, "instances": []}
         else:
-            composited, alpha_map, comp_meta = compositor.composite(bg, stamp, rng)
+            sample_mark_id = str(rng.choice(mark_ids, p=mark_probs))
+            mark_counts[sample_mark_id] += 1
+            composited, alpha_map, comp_meta = compositor.composite(
+                bg, stamps[sample_mark_id], rng, mark=sample_mark_id)
 
         composited, alpha_map = compositor.apply_scan_augmentations(composited, alpha_map, rng)
 
@@ -182,7 +215,12 @@ def generate_dataset(out_dir: Path, backgrounds_dir: Optional[Path], n_samples: 
             "label": _rel(label_path, out_dir),
             "alpha": _rel(alpha_path, out_dir),
             "class_name": class_name,
-            "mark_id": mark_id,
+            # The mark ACTUALLY used for this sample -- None for negatives.
+            # This must come from comp_meta (i.e. from what composite()
+            # itself resolved), not from a single CLI-wide constant: once a
+            # sample can draw from more than one mark, a constant would be
+            # wrong for every sample that didn't happen to get the first one.
+            "mark_id": comp_meta.get("mark_id"),
             "negative": is_negative,
             "background_file": bg_file,
             "jpeg_quality": jpeg_quality,
@@ -219,6 +257,7 @@ def generate_dataset(out_dir: Path, backgrounds_dir: Optional[Path], n_samples: 
         "n_train": sum(1 for r in meta_records if r["split"] == "train"),
         "n_val": sum(1 for r in meta_records if r["split"] == "val"),
         "used_placeholders": use_placeholders,
+        "mark_counts": mark_counts,
         "meta_path": str(meta_path),
         "data_yaml": str(data_yaml_path),
     }
@@ -253,8 +292,34 @@ def main(argv=None):
     ap.add_argument("--jpeg-quality-min", type=int, default=55)
     ap.add_argument("--jpeg-quality-max", type=int, default=95)
     ap.add_argument("--assets-dir", default=None, help="Override the _wm_extract_deliverable source-crop directory.")
-    ap.add_argument("--mark-id", default="ariatender")
+    ap.add_argument("--mark-id", default=None,
+                     help="Single-mark shorthand: generate using only this one registered mark "
+                          "(e.g. 'ariatender_stacked' or 'ariatender_wide'). Ignored if --marks is "
+                          "also given -- see --marks.")
+    ap.add_argument("--marks", default=None,
+                     help="Comma-separated list of registered mark ids to draw from per positive "
+                          "sample (default: 'ariatender_stacked,ariatender_wide', i.e. both). "
+                          "If both --marks and --mark-id are given, --marks wins and a note is "
+                          "printed saying so.")
+    ap.add_argument("--mark-weights", default=None,
+                     help="Comma-separated floats, one per entry in --marks, giving each mark's "
+                          "relative sampling weight (default: equal weight for every mark). "
+                          "Normalised automatically, so they need not sum to 1.")
     args = ap.parse_args(argv)
+
+    if args.marks is not None:
+        mark_ids = [m.strip() for m in args.marks.split(",") if m.strip()]
+        if args.mark_id is not None:
+            print(f"[generate] NOTE: both --marks and --mark-id were given; --marks "
+                  f"({mark_ids}) wins, --mark-id ({args.mark_id!r}) is ignored.", file=sys.stderr)
+    elif args.mark_id is not None:
+        mark_ids = [args.mark_id]
+    else:
+        mark_ids = None  # generate_dataset defaults this to every registered mark.
+
+    mark_weights = None
+    if args.mark_weights is not None:
+        mark_weights = [float(x.strip()) for x in args.mark_weights.split(",") if x.strip()]
 
     summary = generate_dataset(
         out_dir=Path(args.out),
@@ -265,7 +330,8 @@ def main(argv=None):
         seed=args.seed,
         jpeg_quality_range=(args.jpeg_quality_min, args.jpeg_quality_max),
         assets_dir=args.assets_dir,
-        mark_id=args.mark_id,
+        mark_ids=mark_ids,
+        mark_weights=mark_weights,
     )
     print(json.dumps(summary, indent=2))
 

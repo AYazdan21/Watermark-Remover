@@ -49,3 +49,7 @@ wm_testset/images/
 
 # Colab upload bundle (regenerable from wm_dataset_out/)
 wm_dataset_colab.zip
+
+# regenerated synthetic dataset + background pool (large, reproducible from scripts)
+wm_backgrounds_v2/
+wm_dataset_v2/

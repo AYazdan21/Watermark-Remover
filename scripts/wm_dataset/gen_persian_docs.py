@@ -11,6 +11,17 @@ matters for training a segmentation model: bordered notices, dense tables,
 form grids, plain letters, spreadsheet grids -- at varying page sizes,
 margins, tints, rule colors, font sizes and a "scanned" degradation.
 
+Ground variety: early corpora from this module were uniformly light,
+near-white paper with dark ink -- realistic for a scanned form, useless for
+teaching a segmenter that a watermark can sit on a dark presentation slide,
+a photograph, or blank paper. `PageStyle` therefore also samples dark
+grounds (~15%) and strongly tinted coloured papers (~20%) alongside the
+original near-white look, inverting ink/rule/accent to light variants
+whenever the ground is dark (see `PageStyle.random`); and three archetypes
+-- `blank_page`, `photo_report`, `slide_deck` -- cover near-empty pages,
+pages with procedural raster imagery, and landscape slide decks, which the
+original six (all dense text/tables/forms) never exercised.
+
 Text rendering: Persian is RTL and cursive-joining -- naively drawing a
 logical-order Unicode string with a shaping-unaware layout engine produces
 disconnected, wrongly-ordered letterforms. This module renders through
@@ -317,6 +328,61 @@ ACCENT_COLORS = [
     (60, 60, 60),    # charcoal
 ]
 
+# Strongly-tinted light papers -- real forms/letterheads use visibly
+# coloured stock (pale blue requisition forms, pale-yellow carbon copies,
+# pale-pink "urgent" routing sheets), not just the near-white BG_TINTS
+# above. Luminance stays high (~230-245) so the existing dark
+# RULE_COLORS/ACCENT_COLORS remain legible directly on top -- no ink
+# inversion needed for these.
+COLOR_BG_TINTS = [
+    (225, 235, 250),  # pale blue
+    (224, 240, 226),  # pale green
+    (250, 244, 214),  # pale yellow
+    (250, 228, 235),  # pale pink
+    (235, 228, 245),  # pale grey-lavender
+]
+
+# Dark grounds -- near-black neutrals and dark navy/charcoal/slate, kept in
+# roughly the 18-55 luminance range so they read as "a dark UI/slide", not
+# pure black. Ink/rule/accent must invert to light colours whenever one of
+# these is chosen (see PageStyle.random) or every archetype renders
+# black-on-black.
+DARK_BG_GROUNDS = [
+    (18, 18, 20),    # near-black neutral
+    (26, 28, 32),    # graphite
+    (30, 33, 40),    # slate
+    (22, 26, 38),    # dark navy
+    (35, 30, 30),    # dark charcoal-brown
+    (28, 40, 36),    # dark forest
+    (50, 52, 58),    # lighter slate, near the top of the range
+]
+
+# Light ink for dark grounds -- swapped in for style.rule (the main
+# body-text/line colour, drawn straight onto the page background) whenever
+# PageStyle.random picks a dark ground. All comfortably above ~210
+# luminance so contrast against DARK_BG_GROUNDS is never marginal.
+DARK_RULE_COLORS = [
+    (235, 235, 235),
+    (225, 228, 232),
+    (210, 215, 225),  # cool light gray
+    (230, 220, 205),  # warm cream
+]
+
+# Light accent for dark grounds -- swapped in for style.accent (used for
+# borders/underlines/seals/letterhead text drawn straight on the page
+# background) whenever the ground is dark. NOT used for the opaque
+# header/footer bars -- those keep drawing from ACCENT_COLORS via
+# style.bar_fill so the bar's hardcoded white text stays legible regardless
+# of what the surrounding page looks like.
+DARK_ACCENT_COLORS = [
+    (140, 180, 240),  # light blue
+    (240, 160, 170),  # light coral/rose
+    (150, 215, 175),  # light mint
+    (230, 195, 120),  # light gold/tan
+    (140, 215, 220),  # light cyan/teal
+    (200, 200, 205),  # light graphite/silver
+]
+
 
 @dataclass
 class PageStyle:
@@ -326,26 +392,58 @@ class PageStyle:
     bg: Tuple[int, int, int]
     rule: Tuple[int, int, int]
     accent: Tuple[int, int, int]
+    bar_fill: Tuple[int, int, int]
     font_family: int
     base_font_size: int
     margin: int
     scanned: bool
+    dark: bool
 
     @staticmethod
-    def random(rng: random.Random) -> "PageStyle":
-        w, h, name = rng.choice(PAGE_SIZES)
+    def random(rng: random.Random, prefer_landscape: bool = False) -> "PageStyle":
+        sizes = PAGE_SIZES
+        if prefer_landscape and rng.random() < 0.85:
+            landscape_sizes = [s for s in PAGE_SIZES if s[0] > s[1]]
+            if landscape_sizes:
+                sizes = landscape_sizes
+        w, h, name = rng.choice(sizes)
         # +/- 6% jitter on page size for variety without breaking archetype proportions
         w = int(w * rng.uniform(0.94, 1.06))
         h = int(h * rng.uniform(0.94, 1.06))
+
+        # Ground: ~15% dark, ~20% strongly-tinted light, the remaining ~65%
+        # the original near-white look. Ink/rule/accent are picked to match
+        # centrally, right here, so every archetype below just uses
+        # style.rule/style.accent and gets the right contrast for free
+        # instead of needing its own "if dark:" branch.
+        roll = rng.random()
+        if roll < 0.15:
+            dark = True
+            bg = rng.choice(DARK_BG_GROUNDS)
+        elif roll < 0.35:
+            dark = False
+            bg = rng.choice(COLOR_BG_TINTS)
+        else:
+            dark = False
+            bg = rng.choice(BG_TINTS)
+
+        rule = rng.choice(DARK_RULE_COLORS) if dark else rng.choice(RULE_COLORS)
+        accent = rng.choice(DARK_ACCENT_COLORS) if dark else rng.choice(ACCENT_COLORS)
+        # Always drawn from the original mid-dark palette regardless of
+        # ground: this is the fill behind hardcoded white bar text (header
+        # bars, table header rows, ...), so it must stay dark/saturated
+        # enough for white to read on it even when the page around it is a
+        # dark ground with a light accent everywhere else.
+        bar_fill = rng.choice(ACCENT_COLORS)
+
         return PageStyle(
             w=w, h=h, size_name=name,
-            bg=rng.choice(BG_TINTS),
-            rule=rng.choice(RULE_COLORS),
-            accent=rng.choice(ACCENT_COLORS),
+            bg=bg, rule=rule, accent=accent, bar_fill=bar_fill,
             font_family=rng.randrange(n_font_families()),
             base_font_size=rng.randint(20, 30),
             margin=rng.randint(50, 110),
             scanned=rng.random() < 0.35,
+            dark=dark,
         )
 
 
@@ -371,7 +469,7 @@ def gen_tender_notice(rng: random.Random, style: PageStyle) -> Image.Image:
         d.rectangle([inset, inset, w - inset, h - inset], outline=style.rule, width=1)
 
     bar_h = rng.randint(50, 80)
-    d.rectangle([m, m, w - m, m + bar_h], fill=style.accent)
+    d.rectangle([m, m, w - m, m + bar_h], fill=style.bar_fill)
     org = rng.choice(ORG_NAMES)
     hdr_font = get_font(rng.randint(24, 30), bold=True, family_idx=style.font_family)
     draw_rtl(d, (w - m - 20, m + bar_h // 2), org, hdr_font, (255, 255, 255), anchor="rm")
@@ -430,7 +528,7 @@ def gen_tender_notice(rng: random.Random, style: PageStyle) -> Image.Image:
         if seal_y > y + 20:
             _draw_geo_seal(d, (w - m - 55, seal_y), 38, style.accent)
 
-    d.rectangle([m, footer_top, w - m, h - m], fill=style.accent)
+    d.rectangle([m, footer_top, w - m, h - m], fill=style.bar_fill)
     foot_font = get_font(style.base_font_size - 4, family_idx=style.font_family)
     footer_text = f"نشانی: خیابان اصلی، پلاک {rand_number(rng,1,300)} - تلفن: {farsi_digits('021-8800'+str(rng.randint(1000,9999)))}"
     draw_rtl(d, (w - m - 20, h - m - footer_h // 2), footer_text, foot_font, (255, 255, 255), anchor="rm")
@@ -480,7 +578,7 @@ def gen_tabular_document(rng: random.Random, style: PageStyle) -> Image.Image:
     header_font = get_font(style.base_font_size - 2, bold=True, family_idx=style.font_family)
     cell_font = get_font(style.base_font_size - 4, family_idx=style.font_family)
 
-    d.rectangle([m, table_top, w - m, table_top + row_h], fill=style.accent)
+    d.rectangle([m, table_top, w - m, table_top + row_h], fill=style.bar_fill)
     for i, htext in enumerate(TABLE_HEADERS):
         cx = (col_x[i] + col_x[i + 1]) / 2
         draw_rtl(d, (cx, table_top + row_h / 2), htext, header_font, (255, 255, 255), anchor="mm")
@@ -524,7 +622,7 @@ def gen_form_layout(rng: random.Random, style: PageStyle) -> Image.Image:
     w, h, m = style.w, style.h, style.margin
 
     bar_h = rng.randint(55, 75)
-    d.rectangle([0, 0, w, bar_h], fill=style.accent)
+    d.rectangle([0, 0, w, bar_h], fill=style.bar_fill)
     hdr_font = get_font(style.base_font_size + 6, bold=True, family_idx=style.font_family)
     draw_rtl(d, (w - m, bar_h / 2), "فرم درخواست ثبت‌نام متقاضی", hdr_font, (255, 255, 255), anchor="rm")
 
@@ -646,6 +744,13 @@ def gen_spreadsheet(rng: random.Random, style: PageStyle) -> Image.Image:
     grid_right = min(grid_right, w - 10)
     n_cols = max(1, int((grid_right - grid_left - row_label_w) / col_w))
 
+    # The interior always renders as a plain white spreadsheet canvas,
+    # independent of style.bg/style.dark: a screenshot of a spreadsheet app
+    # keeps its own white cell background no matter what desktop/viewer
+    # chrome surrounds it, and the hardcoded dark cell-text colors below
+    # would be unreadable if this showed through to a dark page ground.
+    d.rectangle([grid_left, grid_top, grid_right, grid_top + row_h * (n_rows + 1)], fill=(255, 255, 255))
+
     # column header row (letters stay LTR -- matches real spreadsheet apps)
     d.rectangle([grid_left, grid_top, grid_right, grid_top + row_h], fill=(240, 240, 240))
     for c in range(n_cols):
@@ -744,6 +849,405 @@ SECTION_TITLES = [
     "توضیحات تکمیلی",
 ]
 
+PHOTO_REPORT_TITLES = [
+    "گزارش تصویری پیشرفت پروژه",
+    "پیوست مستندات فنی و تصویری",
+    "گزارش مستندسازی بازدید میدانی",
+    "ضمیمه تصاویر و نمودارهای گزارش",
+]
+
+FIGURE_CAPTIONS = [
+    "شکل {n}- نمودار روند تغییرات در دوره گزارش",
+    "تصویر {n}- نمای کلی از محل اجرای پروژه",
+    "شکل {n}- نقشه موقعیت جغرافیایی طرح",
+    "تصویر {n}- مستندات تصویری بازدید میدانی",
+    "نمودار {n}- مقایسه شاخص‌های عملکردی",
+]
+
+SLIDE_TITLES = [
+    "گزارش عملکرد سالانه",
+    "برنامه راهبردی توسعه",
+    "خلاصه نتایج پروژه",
+    "چشم‌انداز و اهداف سازمانی",
+    "تحلیل بازار و رقبا",
+    "جمع‌بندی و پیشنهادها",
+    "روند رشد و شاخص‌های کلیدی",
+]
+
+SLIDE_BULLETS = [
+    "افزایش بهره‌وری در واحدهای عملیاتی",
+    "کاهش هزینه‌های جاری به میزان قابل توجه",
+    "توسعه زیرساخت فناوری اطلاعات",
+    "ارتقای کیفیت خدمات مشتریان",
+    "برنامه‌ریزی برای توسعه بازار منطقه‌ای",
+    "تقویت تیم‌های تخصصی و آموزش کارکنان",
+    "بهبود فرآیندهای داخلی گزارش‌دهی",
+    "گسترش همکاری‌های بین‌بخشی",
+]
+
+
+# ---------------------------------------------------------------------------
+# Procedural imagery -- for `photo_report`'s figures/photos. No network, no
+# external assets: everything below is generated from noise/gradient math,
+# the same spirit as the rest of this module's "programmatic generation
+# instead of scraping" approach (see module docstring).
+# ---------------------------------------------------------------------------
+
+def _value_noise_field(w: int, h: int, rng: random.Random, octaves: int = 4, persistence: float = 0.55) -> np.ndarray:
+    """Multi-octave value noise in [0, 1], shape (h, w).
+
+    Standard "value noise" trick: draw a small grid of independent random
+    values per octave and let PIL's bicubic resize do the smooth
+    interpolation up to full resolution (that's the same role a lattice
+    interpolation function plays in classic value/Perlin noise), then sum
+    octaves at halving amplitude/doubling frequency. Deterministic given
+    `rng`, and cheap since every octave's source grid is tiny.
+    """
+    field = np.zeros((h, w), dtype=np.float32)
+    amp = 1.0
+    total_amp = 0.0
+    grid_h = 3
+    for _ in range(max(1, octaves)):
+        gh = max(2, grid_h)
+        gw = max(2, int(round(gh * w / max(1, h))))
+        grid = np.array([[rng.random() for _ in range(gw)] for _ in range(gh)], dtype=np.float32)
+        small = Image.fromarray((grid * 255).astype(np.uint8), mode="L")
+        big = small.resize((w, h), resample=Image.BICUBIC)
+        field += amp * (np.asarray(big, dtype=np.float32) / 255.0)
+        total_amp += amp
+        amp *= persistence
+        grid_h *= 2
+    field /= max(total_amp, 1e-6)
+    field -= field.min()
+    mx = field.max()
+    if mx > 1e-6:
+        field /= mx
+    return field
+
+
+def _linear_gradient_array(w: int, h: int, angle_deg: float) -> np.ndarray:
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    theta = math.radians(angle_deg)
+    proj = xx * math.cos(theta) + yy * math.sin(theta)
+    proj -= proj.min()
+    mx = proj.max()
+    if mx > 1e-6:
+        proj /= mx
+    return proj
+
+
+def _radial_gradient_array(w: int, h: int, cx: float, cy: float) -> np.ndarray:
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    d = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+    mx = d.max()
+    if mx > 1e-6:
+        d /= mx
+    return d
+
+
+def _colorize_field(field: np.ndarray, c0: Tuple[int, int, int], c1: Tuple[int, int, int]) -> np.ndarray:
+    """Linearly interpolate an HxW field of [0,1] values between two colors,
+    per-pixel, returning an HxWx3 uint8 array."""
+    c0a = np.array(c0, dtype=np.float32)
+    c1a = np.array(c1, dtype=np.float32)
+    out = c0a[None, None, :] + (c1a - c0a)[None, None, :] * field[..., None]
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def _random_image_palette(rng: random.Random) -> Tuple[Tuple[int, int, int], Tuple[int, int, int], bool]:
+    """Picks the two colorize endpoints for a procedural figure, and whether
+    it's near-monochrome. Deliberately spans bright / dark / colorful /
+    near-monochrome outcomes -- the whole point of `photo_report` is that
+    the watermark has to be learned against imagery that varies in
+    luminance and saturation, not one washed-out noise texture repeated."""
+    kind = rng.choices(
+        ["colorful", "bright_duo", "dark_duo", "mono_dark", "mono_bright"],
+        weights=[0.35, 0.2, 0.2, 0.125, 0.125],
+    )[0]
+    if kind == "colorful":
+        c0 = tuple(rng.randint(20, 235) for _ in range(3))
+        c1 = tuple(rng.randint(20, 235) for _ in range(3))
+        return c0, c1, False
+    if kind == "bright_duo":
+        base = rng.choice(ACCENT_COLORS)
+        light = tuple(min(255, int(c * 0.4 + 180)) for c in base)
+        c1 = tuple(min(255, c + 40) for c in light)
+        return light, c1, False
+    if kind == "dark_duo":
+        base = rng.choice(ACCENT_COLORS)
+        d0 = tuple(int(c * 0.3) for c in base)
+        d1 = tuple(int(c * 0.15) for c in base)
+        return d0, d1, False
+    if kind == "mono_dark":
+        g0 = rng.randint(10, 40)
+        g1 = min(255, g0 + rng.randint(40, 90))
+        return (g0, g0, g0), (g1, g1, g1), True
+    g0 = rng.randint(150, 195)  # mono_bright
+    g1 = min(255, g0 + rng.randint(40, 90))
+    return (g0, g0, g0), (g1, g1, g1), True
+
+
+def _add_soft_blobs(arr: np.ndarray, rng: random.Random, c0, c1) -> np.ndarray:
+    """Composites a handful of heavily-blurred, alpha-masked colored
+    ellipses onto an existing image array -- the "soft coloured blob"
+    look of an out-of-focus photo or a defocused bokeh background."""
+    h, w = arr.shape[:2]
+    base = Image.fromarray(arr, "RGB")
+    n = rng.randint(3, 7)
+    for _ in range(n):
+        r = rng.uniform(0.12, 0.35) * max(w, h)
+        cx = rng.uniform(0, w)
+        cy = rng.uniform(0, h)
+        color = c1 if rng.random() < 0.5 else c0
+        jitter = tuple(int(max(0, min(255, c + rng.randint(-30, 30)))) for c in color)
+        layer = Image.new("RGB", (w, h), (0, 0, 0))
+        ImageDraw.Draw(layer).ellipse([cx - r, cy - r, cx + r, cy + r], fill=jitter)
+        mask = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(mask).ellipse([cx - r, cy - r, cx + r, cy + r], fill=rng.randint(60, 140))
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=max(1.0, r * 0.4)))
+        base = Image.composite(layer, base, mask)
+    return np.asarray(base)
+
+
+def _draw_synthetic_chart(w: int, h: int, rng: random.Random, mono: bool) -> Image.Image:
+    """A simple chart-report look: axes plus either a bar chart or a
+    trend polyline with point markers, on its own light or dark panel."""
+    dark_panel = rng.random() < 0.4
+    panel_bg = (24, 26, 30) if dark_panel else (250, 250, 248)
+    ink = (225, 225, 225) if dark_panel else (40, 40, 40)
+    im = Image.new("RGB", (w, h), panel_bg)
+    d = ImageDraw.Draw(im)
+    pad = max(8, int(min(w, h) * 0.1))
+    ax_left, ax_bottom = pad, h - pad
+    ax_right, ax_top = w - pad, pad
+    d.line([(ax_left, ax_top), (ax_left, ax_bottom)], fill=ink, width=2)
+    d.line([(ax_left, ax_bottom), (ax_right, ax_bottom)], fill=ink, width=2)
+    palette = [(120, 120, 120), (170, 170, 170), (90, 90, 90)] if mono else ACCENT_COLORS
+
+    if rng.random() < 0.55:
+        n = rng.randint(4, 8)
+        col_w = (ax_right - ax_left) / n
+        bw = col_w * 0.6
+        for i in range(n):
+            val = rng.uniform(0.15, 1.0)
+            bh = val * (ax_bottom - ax_top - 4)
+            x0 = ax_left + i * col_w + col_w * 0.2
+            d.rectangle([x0, ax_bottom - bh, x0 + bw, ax_bottom], fill=rng.choice(palette))
+    else:
+        n = rng.randint(5, 9)
+        pts = []
+        for i in range(n):
+            x = ax_left + i * (ax_right - ax_left) / (n - 1)
+            val = rng.uniform(0.1, 0.95)
+            y = ax_bottom - val * (ax_bottom - ax_top - 4)
+            pts.append((x, y))
+        line_color = rng.choice(palette)
+        d.line(pts, fill=line_color, width=3, joint="curve")
+        for (px, py) in pts:
+            d.ellipse([px - 4, py - 4, px + 4, py + 4], fill=rng.choice(palette))
+    return im
+
+
+def _gen_figure_image(w: int, h: int, rng: random.Random, allow_chart: bool = True) -> Image.Image:
+    """One procedurally generated 'photo/figure' panel of exactly (w, h):
+    multi-octave value noise, a gradient, soft colour blobs, or (if
+    `allow_chart`) a bars/line chart -- picked and colour-graded per call so
+    `photo_report` spans bright, dark, colorful and near-monochrome imagery
+    instead of one recognizable texture repeated everywhere."""
+    w, h = max(2, int(w)), max(2, int(h))
+    kinds = ["noise", "gradient", "blobs"]
+    if allow_chart:
+        kinds.append("chart")
+    kind = rng.choice(kinds)
+    c0, c1, mono = _random_image_palette(rng)
+
+    if kind == "chart":
+        return _draw_synthetic_chart(w, h, rng, mono)
+
+    if kind == "gradient":
+        if rng.random() < 0.5:
+            field = _linear_gradient_array(w, h, rng.uniform(0, 360))
+        else:
+            field = _radial_gradient_array(w, h, rng.uniform(0.2, 0.8) * w, rng.uniform(0.2, 0.8) * h)
+    else:
+        field = _value_noise_field(w, h, rng, octaves=rng.randint(3, 5))
+
+    arr = _colorize_field(field, c0, c1)
+    if kind == "blobs" or (kind == "noise" and rng.random() < 0.4):
+        arr = _add_soft_blobs(arr, rng, c0, c1)
+
+    # A touch of sensor-style grain on every figure -- without it, a
+    # narrow-contrast mono/gradient pick can render so flat it is
+    # indistinguishable from a blank page, which would defeat the whole
+    # point of this archetype (imagery for the watermark to sit on).
+    grain_sigma = rng.uniform(2.0, 6.0)
+    grain = np.random.normal(0, grain_sigma, arr.shape).astype(np.float32)
+    arr = np.clip(arr.astype(np.float32) + grain, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr, "RGB")
+
+
+def gen_blank_page(rng: random.Random, style: PageStyle) -> Image.Image:
+    """A near-empty page -- the "watermark on empty background" case, which
+    was previously completely absent from this corpus.
+
+    Every other archetype gives the segmenter dense structure to key off
+    of (a rule, a table edge, a text line) right where a mark tends to
+    land. Without an archetype at the opposite extreme -- a mark alone on
+    bare paper -- the model never sees the easiest geometric case, and easy
+    cases still need coverage or a detector tuned for clutter can
+    paradoxically stumble on a blank cover sheet or an appendix page. Kept
+    genuinely sparse on purpose: at most a letterhead rule, a page number,
+    a lone signature block or a single heading, never more than two of
+    those four, so ink coverage stays at a few percent at most.
+    """
+    im, d = _new_canvas(style)
+    w, h, m = style.w, style.h, style.margin
+
+    n_elems = rng.choices([0, 1, 2], weights=[0.3, 0.45, 0.25])[0]
+    elems = rng.sample(["letterhead", "pagenum", "signature", "heading"], k=n_elems)
+
+    if "letterhead" in elems:
+        line_y = m + rng.randint(0, 40)
+        if rng.random() < 0.5:
+            org_font = get_font(style.base_font_size - 6, family_idx=style.font_family)
+            draw_rtl(d, (w - m, line_y - org_font.size - 6), rng.choice(ORG_NAMES), org_font, style.rule, anchor="ra")
+        d.line([(m, line_y), (w - m, line_y)], fill=style.rule, width=1)
+
+    if "heading" in elems:
+        head_font = get_font(style.base_font_size + 6, bold=True, family_idx=style.font_family)
+        y0 = m + rng.randint(60, 140)
+        title = rng.choice(TITLES + LETTER_SUBJECTS)
+        tw = text_width(d, title, head_font)
+        draw_rtl(d, (w / 2 + tw / 2, y0), title, head_font, style.rule, anchor="ra")
+
+    if "signature" in elems:
+        sig_font = get_font(style.base_font_size - 2, family_idx=style.font_family)
+        sig_y = h - m - rng.randint(100, 220)
+        d.line([(w - m - 220, sig_y), (w - m, sig_y)], fill=style.rule, width=1)
+        draw_rtl(d, (w - m - 30, sig_y + 12), rng.choice(SIGNATURE_LABELS), sig_font, style.rule, anchor="ra")
+
+    if "pagenum" in elems:
+        pg_font = get_font(style.base_font_size - 6, family_idx=style.font_family)
+        pg = farsi_digits(str(rng.randint(1, 40)))
+        draw_rtl(d, (w / 2, h - m - pg_font.size - 6), pg, pg_font, style.rule, anchor="ma")
+
+    return im
+
+
+def gen_photo_report(rng: random.Random, style: PageStyle) -> Image.Image:
+    """A page whose content includes raster IMAGE regions, not just text --
+    the "watermark over a photo/figure" case.
+
+    Two sub-modes: most pages frame one or two procedurally generated
+    figures (noise/gradient/blob/chart imagery, see `_gen_figure_image`)
+    inside an otherwise normal text page, with a Persian caption under
+    each; the rest are full-bleed, where the generated imagery covers the
+    entire page like a scanned photograph or a screenshot, with little or
+    no text. Both matter for the same reason `blank_page` does: a mark
+    sitting on a photograph destroys different local cues than one sitting
+    on paper, and the segmenter never saw that cue distribution before.
+    """
+    im, d = _new_canvas(style)
+    w, h, m = style.w, style.h, style.margin
+
+    if rng.random() < 0.4:
+        scene = _gen_figure_image(w, h, rng, allow_chart=False)
+        im.paste(scene, (0, 0))
+        d = ImageDraw.Draw(im)
+        if rng.random() < 0.35:
+            bar_h = rng.randint(46, 64)
+            d.rectangle([0, h - bar_h, w, h], fill=(15, 15, 18))
+            cap_font = get_font(style.base_font_size - 4, family_idx=style.font_family)
+            cap = rng.choice(FIGURE_CAPTIONS).format(n=farsi_digits(str(rng.randint(1, 9))))
+            draw_rtl(d, (w - m, h - bar_h / 2), cap, cap_font, (235, 235, 235), anchor="rm")
+        return im
+
+    title_font = get_font(style.base_font_size + 8, bold=True, family_idx=style.font_family)
+    draw_rtl(d, (w - m, m), rng.choice(PHOTO_REPORT_TITLES), title_font, style.rule, anchor="ra")
+    y = m + title_font.size + 30
+
+    n_figs = rng.choice([1, 1, 2])
+    gutter = 20 if n_figs == 2 else 0
+    fig_w = int((w - 2 * m - gutter * (n_figs - 1)) / n_figs)
+    fig_h = int(fig_w * rng.uniform(0.55, 0.8))
+    cap_font = get_font(style.base_font_size - 6, family_idx=style.font_family)
+    x_right = w - m
+    max_bottom = y
+    for i in range(n_figs):
+        x_left = x_right - fig_w
+        fig_img = _gen_figure_image(fig_w, fig_h, rng)
+        im.paste(fig_img, (int(x_left), int(y)))
+        d.rectangle([x_left, y, x_right, y + fig_h], outline=style.rule, width=2)
+        cap = rng.choice(FIGURE_CAPTIONS).format(n=farsi_digits(str(i + 1)))
+        cap_y = y + fig_h + 8
+        draw_rtl(d, ((x_left + x_right) / 2, cap_y), cap, cap_font, style.rule, anchor="ma")
+        max_bottom = max(max_bottom, cap_y + cap_font.size * 1.6)
+        x_right = x_left - gutter
+    y = max_bottom + 20
+
+    org = rng.choice(ORG_NAMES)
+    body_font = get_font(style.base_font_size, family_idx=style.font_family)
+    n_para = rng.randint(1, 3)
+    for sent in rng.sample(BODY_SENTENCES, k=min(n_para, len(BODY_SENTENCES))):
+        text = sent.format(org=org)
+        y = draw_rtl_paragraph(d, text, body_font, w - m, y, w - 2 * m, style.rule, line_gap=1.6)
+        y += body_font.size * 0.8
+
+    return im
+
+
+def gen_slide_deck(rng: random.Random, style: PageStyle) -> Image.Image:
+    """A landscape presentation-slide look: a large title, a short bullet
+    list, optionally a gradient wash over the ground, and a footer/logo
+    bar -- the archetype `PageStyle.random(prefer_landscape=True)` biases
+    towards the landscape entries in PAGE_SIZES for.
+
+    Exists because a watermark on a slide export (a deck screenshot
+    attached to an email, a PDF-per-slide report) is a visually distinct
+    regime from a business letter: huge sparse type, a handful of bullets,
+    and -- unlike every other archetype here -- a dark or saturated ground
+    is the norm rather than the rare case, since dark slide themes are
+    extremely common in the real corpus this augments.
+    """
+    im, d = _new_canvas(style)
+    w, h, m = style.w, style.h, int(style.margin * 0.8)
+
+    if rng.random() < 0.5:
+        if rng.random() < 0.6:
+            field = _linear_gradient_array(w, h, rng.uniform(0, 360))
+        else:
+            field = _radial_gradient_array(w, h, rng.uniform(0.2, 0.8) * w, rng.uniform(0.2, 0.8) * h)
+        wash = _colorize_field(field * rng.uniform(0.35, 0.75), style.bg, style.accent)
+        im = Image.fromarray(wash, "RGB")
+        d = ImageDraw.Draw(im)
+
+    title_font = get_font(style.base_font_size + 20, bold=True, family_idx=style.font_family)
+    title = rng.choice(SLIDE_TITLES)
+    y = m + rng.randint(20, 60)
+    draw_rtl(d, (w - m, y), title, title_font, style.rule, anchor="ra")
+    y += title_font.size * 1.6
+    d.line([(w - m, y), (w - m - rng.randint(200, 420), y)], fill=style.accent, width=4)
+    y += 40
+
+    bullet_font = get_font(style.base_font_size + 2, family_idx=style.font_family)
+    n_bul = rng.randint(3, 6)
+    for text in rng.sample(SLIDE_BULLETS, k=min(n_bul, len(SLIDE_BULLETS))):
+        r = 6
+        d.ellipse([w - m - r * 2, y + bullet_font.size * 0.35, w - m, y + bullet_font.size * 0.35 + r * 2],
+                  fill=style.accent)
+        y = draw_rtl_paragraph(d, text, bullet_font, w - m - r * 4 - 14, y, w - 2 * m - r * 4 - 14,
+                                style.rule, line_gap=1.5)
+        y += bullet_font.size * 0.9
+
+    if rng.random() < 0.55:
+        bar_h = rng.randint(30, 46)
+        d.rectangle([0, h - bar_h, w, h], fill=style.bar_fill)
+        foot_font = get_font(style.base_font_size - 8, family_idx=style.font_family)
+        draw_rtl(d, (w - m, h - bar_h / 2), rng.choice(ORG_NAMES), foot_font, (255, 255, 255), anchor="rm")
+        _draw_geo_seal(d, (m + 20, h - bar_h / 2), int(bar_h * 0.32), (255, 255, 255))
+
+    return im
+
 
 ARCHETYPES = {
     "tender_notice": gen_tender_notice,
@@ -752,21 +1256,37 @@ ARCHETYPES = {
     "plain_letter": gen_plain_letter,
     "spreadsheet": gen_spreadsheet,
     "dense_text": gen_dense_text,
+    "blank_page": gen_blank_page,
+    "photo_report": gen_photo_report,
+    "slide_deck": gen_slide_deck,
 }
 
-# Relative frequency in a generated corpus. Text-heavy archetypes are
-# oversampled on purpose: the watermark-over-dense-text case is both the
-# hardest for the model and the one the current detector fails, so it needs
-# the most coverage. The near-empty archetypes (form/spreadsheet grids) still
-# appear because they are common in the real workload and provide the
-# structural-line variety, just at lower weight.
+# Relative frequency in a generated corpus, weights sum to 100 so each value
+# doubles as its exact percentage. Grouped roughly as:
+#   dense/text-heavy   (dense_text, tender_notice, plain_letter)      -> 47%
+#   structured/tabular (tabular_document, form_layout, spreadsheet)  -> 21%
+#   photo_report                                                     -> 13%
+#   blank_page                                                       -> 11%
+#   slide_deck                                                       ->  8%
+# Text-heavy archetypes still dominate: the watermark-over-dense-text case
+# is both the hardest for the model and the one the current detector fails,
+# so it needs the most coverage (dense_text highest of the three). The three
+# newer archetypes (blank_page/photo_report/slide_deck) exist to cover
+# background regimes that were previously entirely absent -- empty pages,
+# raster imagery, and slide decks -- so they get real weight even though
+# they're individually smaller than the text-heavy group. Dark/coloured
+# grounds (see PageStyle.random) cut across ALL of these, not just one
+# archetype, so they aren't a separate weighted bucket here.
 ARCHETYPE_WEIGHTS = {
-    "dense_text": 4,
-    "tender_notice": 3,
-    "plain_letter": 3,
-    "tabular_document": 2,
-    "form_layout": 1,
-    "spreadsheet": 1,
+    "dense_text": 19,
+    "tender_notice": 14,
+    "plain_letter": 14,
+    "tabular_document": 11,
+    "form_layout": 5,
+    "spreadsheet": 5,
+    "photo_report": 13,
+    "blank_page": 11,
+    "slide_deck": 8,
 }
 
 
@@ -774,21 +1294,30 @@ ARCHETYPE_WEIGHTS = {
 # "Scanned" degradation
 # ---------------------------------------------------------------------------
 
-def apply_scan_effects(im: Image.Image, rng: random.Random) -> Image.Image:
+def apply_scan_effects(im: Image.Image, rng: random.Random, dark: bool = False) -> Image.Image:
     """Slight rotation, mild noise, soft blur, off-white cast -- approximates
     a phone photo / flatbed scan of a printed page rather than a clean
-    digital render."""
+    digital render.
+
+    `dark` matters here: a scanned/photographed DARK page (a slide, a
+    dark-themed screenshot) doesn't get the paper-white cast a scanned
+    printed page does. Using the light cast unconditionally would paint
+    bright white triangles into whatever corners the rotation exposes and
+    wash the whole page towards white, defeating the point of the dark
+    grounds in PageStyle -- so both the rotation fill and the color-cast
+    tint switch to a dark neutral instead when the page itself is dark.
+    """
     angle = rng.uniform(-2.2, 2.2)
-    bg = tuple(int(c * 0.97) for c in (250, 248, 244))
-    im = im.rotate(angle, resample=Image.BICUBIC, expand=False, fillcolor=bg)
+    corner_fill = (18, 18, 20) if dark else tuple(int(c * 0.97) for c in (250, 248, 244))
+    im = im.rotate(angle, resample=Image.BICUBIC, expand=False, fillcolor=corner_fill)
 
     arr = np.asarray(im).astype(np.float32)
     noise_sigma = rng.uniform(2.5, 7.0)
     noise = np.random.normal(0, noise_sigma, arr.shape).astype(np.float32)
     arr = np.clip(arr + noise, 0, 255)
 
-    # gentle off-white paper cast + slight contrast pull-in
-    tint = np.array([250, 247, 240], dtype=np.float32)
+    # gentle paper/dark-ambient color cast + slight contrast pull-in
+    tint = np.array([40, 40, 44], dtype=np.float32) if dark else np.array([250, 247, 240], dtype=np.float32)
     mix = rng.uniform(0.03, 0.09)
     arr = arr * (1 - mix) + tint * mix
     arr = np.clip(arr, 0, 255).astype(np.uint8)
@@ -805,10 +1334,10 @@ def apply_scan_effects(im: Image.Image, rng: random.Random) -> Image.Image:
 
 def generate_one(rng: random.Random, archetype: Optional[str] = None) -> Tuple[Image.Image, str, PageStyle]:
     name = archetype or rng.choice(list(ARCHETYPES.keys()))
-    style = PageStyle.random(rng)
+    style = PageStyle.random(rng, prefer_landscape=(name == "slide_deck"))
     im = ARCHETYPES[name](rng, style)
     if style.scanned:
-        im = apply_scan_effects(im, rng)
+        im = apply_scan_effects(im, rng, dark=style.dark)
     return im, name, style
 
 
@@ -821,6 +1350,15 @@ def generate_dataset(out_dir: Path, count: int, seed: int = 0) -> List[Path]:
     for nm, wt in ARCHETYPE_WEIGHTS.items():
         names.extend([nm] * wt)
     names = names or list(ARCHETYPES.keys())
+    # Shuffle the run-length list before walking it. Without this, `names` is
+    # a run of identical entries per archetype in dict order, so
+    # `names[i % len(names)]` emits contiguous BLOCKS -- and any count below
+    # the first archetype's weight yields that archetype and nothing else
+    # (measured: count=18 against a weight of 19 produced 18/18 dense_text,
+    # zero coverage of the other eight). Shuffling once, from the same seeded
+    # rng, keeps generation deterministic per seed while making any prefix of
+    # the sequence an approximately representative sample of the weights.
+    rng.shuffle(names)
     written: List[Path] = []
     for i in range(count):
         archetype = names[i % len(names)]
