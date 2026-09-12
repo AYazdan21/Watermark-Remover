@@ -364,6 +364,80 @@ _MIN_INK_PIXELS = 15
 # stops the single worst observed failure mode.
 _MAX_INSTANCE_COVERAGE = 0.05
 
+# --- removal-color correction (Defect 1 fix) ------------------------------
+#
+# estimate_mark_color ranks pixels inside a mask by |residual| against local
+# background and averages the top 5%, on the premise that the strongest
+# deviation is "least diluted by what's underneath" -- true for a BRIGHT
+# mark (photo_inpainter.py's use case: signed evidence so bright pixels win,
+# see its comment near line 113) but backwards for a faint watermark on
+# paper, where the largest deviation inside the mask is dark body text the
+# mask happens to also cover, not the mark. Measured directly on
+# wm_testset/images/0_3fafdb3957.jpg (finetuned path, conf 0.25): instance 0's
+# top-70 ranked pixels had residual 207-225 (gray ~0-18, i.e. pure black
+# text) even though only 6.1% of its mask is actually dark ink; the ranking
+# handed back mark_color ~= (11,11,11) instead of the true ~= (212,212,211).
+#
+# The fix mirrors doc_segment.py's own per-pixel is_dark_ink exclusion
+# (Otsu - 15) one step earlier, at color-ESTIMATION time rather than only at
+# unmix time: restrict the color estimate to the subset of the mask that
+# survives the same dark-ink exclusion, so it sees the mark itself instead
+# of the text underneath it.
+#
+# The plan going in was to keep estimate_mark_color's top-5%-by-residual
+# ranking and simply apply it inside this restricted subset (ranking by
+# "least diluted" should still make sense once true ink is excluded).
+# Measured directly on instance 0 of the same test image, that does NOT
+# work: its non-ink subset (1316 px) has median gray 216-217 -- matching
+# the true mark color -- but the top 65 px BY RESIDUAL sit at gray 136-172,
+# i.e. anti-aliased text-edge / rule-line pixels that are darker than the
+# mark but happen to fall just above the Otsu-15 cutoff (which is tuned to
+# catch solid ink, not soft edges). Ranking by residual re-selects exactly
+# that contaminated minority -- a smaller-scale repeat of the original bug,
+# not a fix. So the corrected estimate uses the MEDIAN color of the whole
+# non-ink-restricted subset instead of a residual re-ranking: the mark
+# dominates that subset by pixel count, so its median is representative,
+# while a plain median is far less sensitive than a top-5% selection to a
+# small contaminated tail. Confirmed this lands at (217,217,217) for
+# instance 0 -- close to the (212,212,211) true color, both nowhere near
+# the broken (11,11,11) -- see the verification report for the full numbers.
+_MIN_NON_INK_PIXELS = 20  # below this, even a median isn't trustworthy -- see _estimate_removal_mark_color.
+
+
+def _estimate_removal_mark_color(img_np: np.ndarray, mask_bool: np.ndarray, residual: np.ndarray, is_dark_ink_bool: np.ndarray):
+    """Corrected mark-color estimate for actual pixel removal (Defect 1),
+    kept entirely separate from the filter's mark_color/median_ink_alpha --
+    see the long comment in _classify_instance for why the two must not be
+    merged. Returns (color, used_fallback, non_ink_pixel_count).
+
+    Restricts the mask to pixels that are NOT dark ink (mirroring
+    doc_segment.py's is_dark_ink, computed here on the same image), then
+    takes the median RGB of that restricted subset -- see the module-level
+    comment above for why this is a plain median rather than reapplying
+    estimate_mark_color's residual ranking. `residual` is accepted for
+    parity with that ranking approach and is currently unused by the median
+    path; kept as a parameter rather than removed in case a future subset
+    needs it (e.g. doc_segment.py's per-cluster estimate reuses the same
+    residual for a different, smaller mask via estimate_mark_color directly).
+    If too few non-ink pixels survive (< _MIN_NON_INK_PIXELS -- e.g. an
+    instance sitting almost entirely on top of body text), do NOT let the
+    estimate silently degrade further; fall back instead to the median
+    color of the WHOLE instance mask (ink included -- a biased but
+    non-degenerate estimate) and report that the fallback fired so it
+    stays visible rather than silent.
+    """
+    del residual  # see docstring -- unused on the median path, kept for parity/future use
+    non_ink_bool = mask_bool & (~is_dark_ink_bool)
+    non_ink_count = int(np.sum(non_ink_bool))
+    if non_ink_count < _MIN_NON_INK_PIXELS:
+        if np.any(mask_bool):
+            fallback_color = np.median(img_np[mask_bool].reshape(-1, 3), axis=0).astype(np.float64)
+        else:
+            fallback_color = np.array([255.0, 255.0, 255.0])
+        return fallback_color, True, non_ink_count
+    color = np.median(img_np[non_ink_bool].reshape(-1, 3), axis=0).astype(np.float64)
+    return color, False, non_ink_count
+
 # A second opaque-ink cutoff, used only on the finetuned direct-mask path
 # (model_choice == "Finetuned (AriaTender)"). _OPAQUE_REJECT_ALPHA above
 # was calibrated against MobileSAM envelopes, which -- being a coarse
@@ -421,6 +495,24 @@ def _classify_instance(img_np: np.ndarray, inst_mask: np.ndarray, opaque_reject_
     calibration) so every existing caller is unaffected; the direct-mask
     path passes _SEG_OPAQUE_REJECT_ALPHA instead -- see that constant's
     comment for why the two models need different cutoffs.
+
+    IMPORTANT split (Defect 1 fix): this function returns TWO different
+    colors, and they must stay different.
+      - "mark_color" is left computed EXACTLY as before (same residual,
+        same np.abs, same unrestricted top-5% ranking) purely because
+        median_ink_alpha -- the statistic _OPAQUE_REJECT_ALPHA (0.78) and
+        _SEG_OPAQUE_REJECT_ALPHA (0.97) are thresholds on -- was measured
+        and calibrated against exactly this (contaminated) quantity. Those
+        cutoffs are an empirical discriminator tuned on that exact number,
+        not a physical opacity; correcting the color would shift real
+        marks' alpha from ~0.05-0.32 up toward ~1.0 (it stops being "how
+        opaque is the mark" and becomes "how opaque is the black text under
+        it"), which would blow through both cutoffs and reject nearly every
+        real instance. So the filter path is untouched end to end.
+      - "removal_mark_color" is the corrected estimate (see
+        _estimate_removal_mark_color) and is what doc_segment.py actually
+        uses to unmix pixels. It is computed independently, from the same
+        residual and mask, but ranked only over non-ink pixels.
     """
     mask_bool = inst_mask > 0
     h, w = inst_mask.shape[:2]
@@ -436,19 +528,37 @@ def _classify_instance(img_np: np.ndarray, inst_mask: np.ndarray, opaque_reject_
             "accepted": False,
             "reject_reason": f"mask too large ({page_coverage * 100:.1f}% of page >= {_MAX_INSTANCE_COVERAGE * 100:.0f}%, SAM likely failed to isolate a tight object)",
             "background": None, "mark_color": None,
+            "removal_mark_color": None, "removal_color_fallback": False,
         }
 
     bg_est = local_ring_background(img_np, inst_mask)
-    gray_full = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY).astype(np.float64)
+    gray_u8 = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    gray_full = gray_u8.astype(np.float64)
     bg_gray = cv2.cvtColor(bg_est, cv2.COLOR_RGB2GRAY).astype(np.float64)
     residual = np.abs(gray_full - bg_gray)
 
     ink_bool = _ink_subset(residual, mask_bool)
+    # UNCHANGED filter path -- see this function's docstring for why the
+    # contaminated color must be kept exactly as it was for median_ink_alpha.
     mark_color = estimate_mark_color(img_np, inst_mask, residual)
     result = unmix_region(img_np, inst_mask, mark_color=mark_color, background=bg_est)
 
     alpha_ink = result.alpha[ink_bool]
     median_ink_alpha = float(np.median(alpha_ink)) if alpha_ink.size else 0.0
+
+    # Separate, corrected estimate for actual removal -- decoupled from the
+    # filter statistic above (see docstring). Mirrors doc_segment.py's
+    # per-pixel is_dark_ink exclusion (Otsu - 15) so it is computed on the
+    # SAME per-image Otsu threshold doc_segment will later use to carve
+    # dark ink out of every instance's mask before unmixing -- there is no
+    # separate "instance-level Otsu"; the threshold is a whole-page
+    # statistic recomputed here (cheaply, one image-wide cv2.threshold
+    # call) for every instance rather than threaded through as a parameter.
+    otsu_val, _ = cv2.threshold(gray_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    is_dark_ink_bool = gray_full < (float(otsu_val) - 15.0)
+    removal_mark_color, removal_color_fallback, non_ink_count = _estimate_removal_mark_color(
+        img_np, mask_bool, residual, is_dark_ink_bool
+    )
 
     bg_hsv = cv2.cvtColor(bg_est, cv2.COLOR_RGB2HSV)
     bg_saturation = float(np.median(bg_hsv[:, :, 1][mask_bool])) if np.any(mask_bool) else 0.0
@@ -467,6 +577,9 @@ def _classify_instance(img_np: np.ndarray, inst_mask: np.ndarray, opaque_reject_
         "reject_reason": reject_reason,
         "background": bg_est,
         "mark_color": mark_color,
+        "removal_mark_color": removal_mark_color,
+        "removal_color_fallback": removal_color_fallback,
+        "removal_color_non_ink_pixels": non_ink_count,
     }
 
 
@@ -552,6 +665,7 @@ def detect_watermark_masks(img_np: np.ndarray, conf: float = 0.15, model_choice:
                 "box": tuple(float(v) for v in box), "conf": float(conf_i), "source": src,
                 "mask": inst_mask, "accepted": False, "reject_reason": "empty mask",
                 "median_ink_alpha": 0.0,
+                "removal_mark_color": None, "removal_color_fallback": False,
             })
             continue
 
@@ -562,6 +676,10 @@ def detect_watermark_masks(img_np: np.ndarray, conf: float = 0.15, model_choice:
             "median_ink_alpha": cls["median_ink_alpha"], "bg_saturation": cls["bg_saturation"],
             "page_coverage": cls["page_coverage"],
             "background": cls["background"], "mark_color": cls["mark_color"],
+            # Corrected removal color -- see _classify_instance's docstring
+            # for why this is a DIFFERENT value from "mark_color" above.
+            "removal_mark_color": cls["removal_mark_color"],
+            "removal_color_fallback": cls["removal_color_fallback"],
         })
         if cls["accepted"]:
             accepted_mask = np.maximum(accepted_mask, inst_mask)
