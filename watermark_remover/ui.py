@@ -175,6 +175,19 @@ def build_ui():
                                 value=True,
                                 info="Uses Mobile-SAM to refine detected boxes into precise masks before deblending. Ignored when Segmentation Model = Finetuned (AriaTender), which emits masks directly and never runs SAM.",
                             )
+                        with gr.Row():
+                            seg_use_template_chk = gr.Checkbox(
+                                label="🧪 Experimental: Template-registered removal (recommended, revertible)",
+                                value=True,
+                                info=(
+                                    "Registers the real, calibrated AriaTender mark to each detected instance so "
+                                    "per-pixel opacity is known instead of guessed from brightness -- clears the "
+                                    "watermark fully instead of leaving a faint grey ghost, without the risk of "
+                                    "erasing table rules. Falls back to the older bounded correction per-instance "
+                                    "when registration doesn't score well. Uncheck to revert Method 3 entirely to "
+                                    "its previous behaviour (bit-identical) if this path misbehaves on your documents."
+                                ),
+                            )
 
                     save_dataset_chk = gr.Checkbox(
                         label="💾 Auto-save to dataset/ (raw original + cleaned result)",
@@ -216,6 +229,7 @@ def build_ui():
                     seg_conf_slider,
                     seg_model_select,
                     seg_use_sam_chk,
+                    seg_use_template_chk,
                     save_dataset_chk,
                 ],
                 outputs=[doc_output, doc_status],

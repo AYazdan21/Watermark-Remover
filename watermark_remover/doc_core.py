@@ -197,6 +197,7 @@ def clean_document(
     seg_conf: float = 0.25,
     seg_model: str = "Finetuned (AriaTender)",
     seg_use_sam: bool = True,
+    seg_use_template: bool = True,
     save_dataset: bool = True,
 ):
     """
@@ -208,13 +209,18 @@ def clean_document(
     to ``doc_segment.py``). ``save_dataset`` gates ALL writes to ``dataset/``
     -- when False, nothing is written, for any method.
 
-    ``seg_conf``/``seg_model``/``seg_use_sam`` are M3-only and passed straight
-    through to ``doc_segment.clean_document_segment``. Their defaults now
-    point at the finetuned direct-mask model ("Finetuned (AriaTender)") at
-    conf=0.25 -- see that function's docstring and segmenter.py's
+    ``seg_conf``/``seg_model``/``seg_use_sam``/``seg_use_template`` are
+    M3-only and passed straight through to
+    ``doc_segment.clean_document_segment``. Their defaults now point at the
+    finetuned direct-mask model ("Finetuned (AriaTender)") at conf=0.25 --
+    see that function's docstring and segmenter.py's
     _SEG_OPAQUE_REJECT_ALPHA comment for the measurements behind both
     numbers. ``seg_use_sam`` only affects the two legacy model choices; the
-    finetuned model never runs SAM.
+    finetuned model never runs SAM. ``seg_use_template`` is the toggle for
+    the newer template-registration removal path (see template_match.py
+    and doc_segment.clean_document_segment's docstring) -- default True;
+    set False to revert M3 to its previous, bounded-subtractive-only
+    behaviour at runtime without touching code.
     """
     if method == METHOD_SEGMENT:
         if doc_image is None:
@@ -236,6 +242,7 @@ def clean_document(
             conf=seg_conf,
             model_choice=seg_model,
             use_sam=seg_use_sam,
+            use_template=seg_use_template,
         )
 
         seg_index = None

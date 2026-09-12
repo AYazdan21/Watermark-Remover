@@ -58,6 +58,19 @@ are untouched, see segmenter.py):
      is what fixes the dashing -- see clean_document_segment) -- it is kept
      only for ESTIMATING `D` and the two-tone clusters, where dark real ink
      mixed into the sample would bias the estimate.
+
+Bounding D still leaves a visible artifact of its own: D is sized to the
+TYPICAL mark pixel, so roughly half of every instance's pixels (those
+darker than typical) are capped short of full recovery -- a grey ghost of
+the letterforms remains. Registering the real, calibrated mark template
+(see template_match.py) resolves this by making per-pixel alpha KNOWN
+instead of inferred from brightness, at which point mark and rule pixels
+stop being a coin flip decided by "how dark is this" (see that module's
+docstring for the full argument and the worked numbers). clean_document_
+segment tries template registration FIRST per instance and only falls
+back to the bounded correction above when registration doesn't clear
+threshold -- see that function's docstring, and the ``use_template``
+parameter for reverting to the bounded path everywhere at once.
 """
 
 import time
@@ -66,6 +79,7 @@ import cv2
 import numpy as np
 
 from .segmenter import detect_watermark_masks, local_ring_background
+from . import template_match
 
 # --- two-tone split (Defect 2 fix) ----------------------------------------
 #
@@ -284,13 +298,32 @@ def _bounded_subtractive_correct(img_np: np.ndarray, background: np.ndarray, mas
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-def clean_document_segment(img_np: np.ndarray, conf: float = 0.25, model_choice: str = "Finetuned (AriaTender)", use_sam: bool = True):
+def clean_document_segment(img_np: np.ndarray, conf: float = 0.25, model_choice: str = "Finetuned (AriaTender)",
+                            use_sam: bool = True, use_template: bool = True):
     """Removes watermark instances found by detect_watermark_masks, one
     instance at a time, using a per-instance local background (never a
-    page-wide flat estimate -- see segmenter.local_ring_background) and a
-    bounded subtractive correction (never a flat replace, and -- as of the
-    Defect 3 fix -- never unmixer.unmix_region either; see module
-    docstring).
+    page-wide flat estimate -- see segmenter.local_ring_background).
+
+    Two removal paths, selected per-instance:
+    - Template registration (see template_match.py), used whenever
+      ``use_template`` is True AND that instance registers above
+      template_match.REGISTRATION_SCORE_THRESHOLD: the mark's own
+      calibrated alpha/ink are KNOWN per pixel rather than inferred from
+      brightness, so the deblend has no brightness-vs-brightness tie to
+      break between mark and table-rule pixels (see template_match.py's
+      module docstring) and no cap -- it clears the mark fully instead of
+      leaving the grey "ghost" the bounded path leaves on ~half of every
+      instance's pixels.
+    - The bounded subtractive correction below (unchanged from before this
+      was added -- Defect 3's fix, see the rest of this module's
+      docstring), used whenever ``use_template`` is False, template
+      registration isn't available at all (e.g. scripts/wm_dataset isn't
+      on this checkout), or this particular instance's best registration
+      score falls below threshold. This is the revert path: with
+      ``use_template=False`` this function is byte-identical to the
+      pre-template-registration implementation (verified with
+      np.array_equal -- see the verification report), so the feature can
+      be backed out at runtime, not just via git.
 
     Defaults now point at the finetuned direct-mask model
     ("Finetuned (AriaTender)") at conf=0.25 -- the confidence measured
@@ -305,7 +338,11 @@ def clean_document_segment(img_np: np.ndarray, conf: float = 0.25, model_choice:
     Returns (cleaned_np uint8 HxWx3, status) where status is a dict with:
       instances_found, instances_accepted, instances_rejected,
       coverage (fraction of page cleaned), used_sam, sam_error,
-      detect_ms, refine_ms, unmix_ms, total_ms, message (human string)
+      detect_ms, refine_ms, unmix_ms, total_ms, message (human string),
+      use_template, template_page_registration, instance_registrations
+      (per-instance score/scale/angle/mark_id/fell_back -- see
+      template_match.register_instance), template_used_count,
+      template_fallback_count
     """
     t0 = time.time()
     mask, meta = detect_watermark_masks(img_np, conf=conf, model_choice=model_choice, use_sam=use_sam)
@@ -320,6 +357,17 @@ def clean_document_segment(img_np: np.ndarray, conf: float = 0.25, model_choice:
     # and only ever touch pixels no earlier (more confident) instance has
     # already resolved.
     accepted_instances.sort(key=lambda inst: -inst["conf"])
+
+    # One page-level (mark_id, scale, angle) fit, shared by every instance's
+    # translation-only refine below (see template_match.py's module
+    # docstring for why scale/rotation are page-level but translation is
+    # not). Computed once here, never inside the per-instance loop -- the
+    # whole point of the two-stage design is that the expensive (scale x
+    # angle) grid search only ever runs on a handful of instances.
+    template_page_reg = {"available": False}
+    instance_registrations = []
+    if use_template:
+        template_page_reg = template_match.fit_page_registration(img_np, accepted_instances)
 
     # Used ONLY to decide which pixels are trustworthy samples for
     # ESTIMATING a mark's color/darkening (real dark ink mixed into that
@@ -340,24 +388,40 @@ def clean_document_segment(img_np: np.ndarray, conf: float = 0.25, model_choice:
         if background is None:
             background = local_ring_background(img_np, inst["mask"])
 
-        non_ink_mask_bool = full_mask_bool & (~is_dark_ink)
+        # Template registration first (see this function's docstring for
+        # when it's tried and when it isn't). Two-tone splitting is not
+        # needed on this path: the template's per-pixel ink colour already
+        # carries the grey-lettering/pink-shield distinction the
+        # k-means split exists to recover on the bounded path (see
+        # _kmeans_two_tone_masks's module comment), so a registered
+        # instance is deblended in one pass over its whole mask.
+        used_template = False
+        if use_template:
+            corrected_t, treg_info = template_match.register_instance(img_np, inst, template_page_reg, full_mask_bool)
+            instance_registrations.append({"box": inst["box"], "conf": inst["conf"], **treg_info})
+            if corrected_t is not None:
+                cleaned[full_mask_bool] = corrected_t
+                used_template = True
 
-        # Defect 2: try splitting into up to 2 color clusters (see
-        # _kmeans_two_tone_masks), fit on non-ink pixels but covering the
-        # FULL mask (ink included) once trustworthy. Returns
-        # [full_mask_bool] unchanged when the split isn't trustworthy, in
-        # which case this is exactly the single-correction path.
-        cluster_masks = _kmeans_two_tone_masks(img_np, non_ink_mask_bool, full_mask_bool)
-        for cluster_mask_bool in cluster_masks:
-            if not np.any(cluster_mask_bool):
-                continue
-            cluster_non_ink_bool = cluster_mask_bool & (~is_dark_ink)
-            # Defect 3: bounded subtractive correction, not an alpha unmix
-            # (see module docstring for why unmix_region is ill-conditioned
-            # once mark_color sits this close to the local background).
-            D = _estimate_darkening(img_np, background, cluster_non_ink_bool, fallback_mask_bool=non_ink_mask_bool)
-            corrected = _bounded_subtractive_correct(img_np, background, cluster_mask_bool, D)
-            cleaned[cluster_mask_bool] = corrected
+        if not used_template:
+            non_ink_mask_bool = full_mask_bool & (~is_dark_ink)
+
+            # Defect 2: try splitting into up to 2 color clusters (see
+            # _kmeans_two_tone_masks), fit on non-ink pixels but covering the
+            # FULL mask (ink included) once trustworthy. Returns
+            # [full_mask_bool] unchanged when the split isn't trustworthy, in
+            # which case this is exactly the single-correction path.
+            cluster_masks = _kmeans_two_tone_masks(img_np, non_ink_mask_bool, full_mask_bool)
+            for cluster_mask_bool in cluster_masks:
+                if not np.any(cluster_mask_bool):
+                    continue
+                cluster_non_ink_bool = cluster_mask_bool & (~is_dark_ink)
+                # Defect 3: bounded subtractive correction, not an alpha unmix
+                # (see module docstring for why unmix_region is ill-conditioned
+                # once mark_color sits this close to the local background).
+                D = _estimate_darkening(img_np, background, cluster_non_ink_bool, fallback_mask_bool=non_ink_mask_bool)
+                corrected = _bounded_subtractive_correct(img_np, background, cluster_mask_bool, D)
+                cleaned[cluster_mask_bool] = corrected
         handled |= full_mask_bool
     unmix_ms = (time.time() - t_unmix0) * 1000
 
@@ -380,11 +444,27 @@ def clean_document_segment(img_np: np.ndarray, conf: float = 0.25, model_choice:
         sam_note = f"raw YOLO boxes (SAM unavailable: {meta['sam_error']})"
     else:
         sam_note = "raw YOLO boxes (SAM disabled)"
+
+    template_used_count = sum(1 for r in instance_registrations if not r.get("fell_back"))
+    template_fallback_count = sum(1 for r in instance_registrations if r.get("fell_back"))
+    template_note = ""
+    if use_template:
+        if template_page_reg.get("available"):
+            template_note = (
+                f" Template registration ({template_page_reg['mark_id']}, "
+                f"scale {template_page_reg['scale']:.3f}, angle {template_page_reg['angle_deg']:.1f} deg): "
+                f"{template_used_count}/{len(instance_registrations)} instance(s) registered, "
+                f"{template_fallback_count} fell back to the bounded correction."
+            )
+        else:
+            template_note = " Template registration unavailable -- all instances used the bounded correction."
+
     message = (
         f"Method 3 (segmentation-driven): {n_found} candidate instance(s) detected, "
         f"{n_accepted} accepted / {n_rejected} rejected by the opaque-ink filter, "
         f"using {sam_note}. Cleaned {coverage_pct:.2f}% of the page in {total_ms:.1f} ms "
         f"(detect {meta['detect_ms']:.1f} ms, refine {meta['refine_ms']:.1f} ms, unmix {unmix_ms:.1f} ms)."
+        f"{template_note}"
     )
 
     status = {
@@ -399,5 +479,10 @@ def clean_document_segment(img_np: np.ndarray, conf: float = 0.25, model_choice:
         "unmix_ms": unmix_ms,
         "total_ms": total_ms,
         "message": message,
+        "use_template": use_template,
+        "template_page_registration": template_page_reg,
+        "instance_registrations": instance_registrations,
+        "template_used_count": template_used_count,
+        "template_fallback_count": template_fallback_count,
     }
     return cleaned, status
