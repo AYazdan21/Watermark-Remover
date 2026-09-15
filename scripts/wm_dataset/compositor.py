@@ -26,6 +26,20 @@ watermarked documents (see module docstring context in the task brief):
               width), the "repeated small mark" case, usually near-horizontal.
   - diagonal: a tiled grid rotated as a whole, 25-50 degrees, covering the
               full page -- the "diagonal repeating banner" case.
+
+Single-layer alpha-regression model (for generate.py's --save-clean /
+"clean" target): the equation `observed = a*ink + (1-a)*clean` is EXACT
+before apply_scan_augmentations -- composite()'s over-accumulated alpha
+(canvas_a) and its RGB blend (canvas_rgb) are built from the same per-tile
+alpha and the same "over" accumulation, so they are mutually consistent by
+construction. apply_scan_augmentations then blurs/resamples image, alpha_map
+and clean identically, but blur does not commute with the multiply in
+`a*ink + (1-a)*clean` (blur(a*ink) != blur(a)*blur(ink) in general), so the
+equation becomes only approximate after augmentation, and only near mark
+edges where alpha changes quickly over the blur kernel's support -- flat
+interior regions (alpha locally constant) are unaffected. This is why the
+alpha-regression network trains against the pre-JPEG `clean` target with an
+L1/robust loss rather than assuming the closed form is exact everywhere.
 """
 
 from __future__ import annotations
@@ -534,18 +548,35 @@ def composite(background: Image.Image, stamp: Image.Image,
 
 def apply_scan_augmentations(image: Image.Image, alpha_map: np.ndarray,
                               rng: np.random.Generator,
-                              ) -> Tuple[Image.Image, np.ndarray]:
+                              clean: Optional[Image.Image] = None,
+                              ) -> Tuple[Image.Image, np.ndarray, Optional[Image.Image]]:
     """Mild Gaussian blur (scanned look) and an occasional downscale/upscale
     round trip (screenshot resampling). Applied identically to the image and
     the alpha map so labels stay aligned with what's visible. JPEG
     re-encoding is deliberately NOT done here -- that happens once, at save
-    time, in generate.py, after both train/val paths reuse this image."""
+    time, in generate.py, after both train/val paths reuse this image.
+
+    `clean` (optional) is the pre-composite background, as a PIL RGB image
+    of the same size as `image` -- the alpha-regression training target. If
+    given, the SAME sampled parameters (blur sigma, downscale factor) are
+    applied to it too, via the same PIL GaussianBlur path used for `image`
+    (not the cv2 path used for `alpha_map`, since `clean` is an RGB photo,
+    not a coverage map). The RNG is consumed in exactly the same order/
+    amount whether or not `clean` is passed -- every `rng.random()`/
+    `rng.uniform()` call below is unconditional on `clean`'s presence -- so
+    an existing `--seed` still reproduces byte-identical `image`/`alpha_map`
+    output regardless of whether `--save-clean` is also given. Returns
+    (image, alpha_map, clean); `clean` in the return is None when not
+    passed in.
+    """
     w, h = image.size
 
     if rng.random() < 0.5:
         sigma = float(rng.uniform(0.3, 1.1))
         image = image.filter(ImageFilter.GaussianBlur(sigma))
         alpha_map = cv2_gaussian_blur(alpha_map, sigma)
+        if clean is not None:
+            clean = clean.filter(ImageFilter.GaussianBlur(sigma))
 
     if rng.random() < 0.3:
         factor = float(rng.uniform(0.5, 0.85))
@@ -554,8 +585,10 @@ def apply_scan_augmentations(image: Image.Image, alpha_map: np.ndarray,
         alpha_img = Image.fromarray((np.clip(alpha_map, 0, 1) * 255).astype(np.uint8))
         alpha_img = alpha_img.resize(small, Image.BILINEAR).resize((w, h), Image.BILINEAR)
         alpha_map = np.asarray(alpha_img, dtype=np.float32) / 255.0
+        if clean is not None:
+            clean = clean.resize(small, Image.BILINEAR).resize((w, h), Image.BILINEAR)
 
-    return image, alpha_map
+    return image, alpha_map, clean
 
 
 def cv2_gaussian_blur(arr: np.ndarray, sigma: float) -> np.ndarray:

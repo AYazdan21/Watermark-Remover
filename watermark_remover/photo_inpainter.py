@@ -28,9 +28,9 @@ def get_yolo_model(model_name: str):
     """Lazily loads and caches YOLO11 watermark detector models."""
     if model_name not in _yolo_models:
         if model_name == "YOLO11 General Watermarks":
-            path = os.path.join(BASE_DIR, "yolo11_watermark_general.pt")
+            path = os.path.join(BASE_DIR, "weights", "yolo11_watermark_general.pt")
         else:
-            path = os.path.join(BASE_DIR, "yolo11s_watermark.pt")
+            path = os.path.join(BASE_DIR, "weights", "yolo11s_watermark.pt")
         if not os.path.exists(path):
             raise FileNotFoundError(f"Model file {path} not found.")
         print(f"Loading {model_name} from {path}...")

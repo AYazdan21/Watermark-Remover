@@ -25,8 +25,25 @@ Output layout:
     <out>/images/{train,val}/*.jpg
     <out>/labels/{train,val}/*.txt   (YOLO-seg polygons; empty file = negative)
     <out>/alpha/{train,val}/*.png    (continuous alpha coverage maps, 0-255)
+    <out>/clean/{train,val}/*.png    (only with --save-clean: the pre-composite,
+                                       pre-JPEG background page -- the alpha-
+                                       regression training target; lossless PNG)
     <out>/data.yaml                  (ultralytics dataset config)
     <out>/meta.jsonl                 (one JSON record per sample)
+    <out>/generation_args.json       (every CLI arg this run was called with,
+                                       including --seed, for reproducing it)
+
+Alpha-regression target, honest note: the single-layer compositing model
+`observed = a*ink + (1-a)*clean` is EXACT before scan augmentation (see
+compositor.py's module docstring) -- alpha and the RGB blend come from the
+same "over" accumulation, so they're consistent by construction. Blur/
+resample (apply_scan_augmentations) then make the equation only approximate
+at mark edges, since blur doesn't commute with the multiply. `clean` is
+saved BEFORE JPEG re-encoding of the composite, so the alpha-regression
+target is the true page, not a JPEG-degraded one -- the network learns
+watermark removal, not JPEG artifact repair; residual JPEG noise in the
+`images/` composite is an irreducible floor on measured recovery error, not
+something the network is trained to fix.
 """
 
 from __future__ import annotations
@@ -106,7 +123,8 @@ def generate_dataset(out_dir: Path, backgrounds_dir: Optional[Path], n_samples: 
                       assets_dir: Optional[str] = None,
                       mark_ids: Optional[List[str]] = None,
                       mark_weights: Optional[List[float]] = None,
-                      class_name: str = "watermark") -> dict:
+                      class_name: str = "watermark",
+                      save_clean: bool = False) -> dict:
     out_dir = Path(out_dir)
     _guard_output_path(out_dir)
 
@@ -145,6 +163,8 @@ def generate_dataset(out_dir: Path, backgrounds_dir: Optional[Path], n_samples: 
         (out_dir / "images" / split).mkdir(parents=True, exist_ok=True)
         (out_dir / "labels" / split).mkdir(parents=True, exist_ok=True)
         (out_dir / "alpha" / split).mkdir(parents=True, exist_ok=True)
+        if save_clean:
+            (out_dir / "clean" / split).mkdir(parents=True, exist_ok=True)
 
     order = np.arange(n_samples)
     rng.shuffle(order)
@@ -172,6 +192,11 @@ def generate_dataset(out_dir: Path, backgrounds_dir: Optional[Path], n_samples: 
         if is_negative:
             n_negative += 1
             composited = bg.convert("RGB")
+            # Same image as the composite for negatives -- there is nothing
+            # to remove, so the "clean" target and the observed page are
+            # identical (both are just `composited`; sharing the object is
+            # safe since apply_scan_augmentations never mutates in place).
+            clean_img = composited if save_clean else None
             alpha_map = np.zeros((bg.height, bg.width), dtype=np.float32)
             sample_mark_id = None
             comp_meta = {"mark_id": None, "pattern": None, "opacity_mult": None, "tint_shift": 0,
@@ -181,8 +206,13 @@ def generate_dataset(out_dir: Path, backgrounds_dir: Optional[Path], n_samples: 
             mark_counts[sample_mark_id] += 1
             composited, alpha_map, comp_meta = compositor.composite(
                 bg, stamps[sample_mark_id], rng, mark=sample_mark_id)
+            # The resized background BEFORE compositing -- composite() never
+            # mutates `bg` itself (it works on its own float32 copy), so this
+            # is a fresh, independent RGB copy of the true page.
+            clean_img = bg.convert("RGB") if save_clean else None
 
-        composited, alpha_map = compositor.apply_scan_augmentations(composited, alpha_map, rng)
+        composited, alpha_map, clean_img = compositor.apply_scan_augmentations(
+            composited, alpha_map, rng, clean=clean_img)
 
         mask, polygons = labels_mod.alpha_to_polygons(alpha_map)
         yolo_lines = labels_mod.polygons_to_yolo_lines(polygons, composited.width, composited.height)
@@ -203,10 +233,16 @@ def generate_dataset(out_dir: Path, backgrounds_dir: Optional[Path], n_samples: 
         img_path = out_dir / "images" / split / f"{sample_id}.jpg"
         label_path = out_dir / "labels" / split / f"{sample_id}.txt"
         alpha_path = out_dir / "alpha" / split / f"{sample_id}.png"
+        clean_path = out_dir / "clean" / split / f"{sample_id}.png" if save_clean else None
 
         composited.convert("RGB").save(img_path, "JPEG", quality=jpeg_quality)
         labels_mod.write_yolo_label(label_path, yolo_lines)
         Image.fromarray((np.clip(alpha_map, 0, 1) * 255).astype(np.uint8)).save(alpha_path)
+        if save_clean:
+            # Lossless: this is the alpha-regression training target, saved
+            # BEFORE the composite's JPEG re-encoding above -- see the
+            # module docstring's honest note on why.
+            clean_img.convert("RGB").save(clean_path, "PNG")
 
         meta_records.append({
             "id": sample_id,
@@ -214,6 +250,7 @@ def generate_dataset(out_dir: Path, backgrounds_dir: Optional[Path], n_samples: 
             "image": _rel(img_path, out_dir),
             "label": _rel(label_path, out_dir),
             "alpha": _rel(alpha_path, out_dir),
+            "clean": _rel(clean_path, out_dir) if save_clean else None,
             "class_name": class_name,
             # The mark ACTUALLY used for this sample -- None for negatives.
             # This must come from comp_meta (i.e. from what composite()
@@ -305,6 +342,11 @@ def main(argv=None):
                      help="Comma-separated floats, one per entry in --marks, giving each mark's "
                           "relative sampling weight (default: equal weight for every mark). "
                           "Normalised automatically, so they need not sum to 1.")
+    ap.add_argument("--save-clean", action="store_true",
+                     help="Also save the pre-composite, pre-JPEG background page as "
+                          "clean/{split}/{id}.png -- the alpha-regression training target. "
+                          "Off by default (extra disk + write time); does not change --seed "
+                          "reproducibility of images/alpha when omitted.")
     args = ap.parse_args(argv)
 
     if args.marks is not None:
@@ -332,7 +374,17 @@ def main(argv=None):
         assets_dir=args.assets_dir,
         mark_ids=mark_ids,
         mark_weights=mark_weights,
+        save_clean=args.save_clean,
     )
+
+    # Every CLI arg this run was called with (incl. seed, n, backgrounds
+    # dir, save_clean) -- so a dataset build can always be reproduced or
+    # audited later without digging through shell history.
+    args_path = Path(args.out) / "generation_args.json"
+    with open(args_path, "w", encoding="utf-8") as f:
+        json.dump(vars(args), f, indent=2, default=str)
+    summary["generation_args"] = str(args_path)
+
     print(json.dumps(summary, indent=2))
 
 

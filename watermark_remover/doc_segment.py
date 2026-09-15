@@ -78,8 +78,21 @@ import time
 import cv2
 import numpy as np
 
-from .segmenter import detect_watermark_masks, local_ring_background
+from .segmenter import detect_watermark_masks, is_direct_mask_model, local_ring_background
 from . import template_match
+from .container_cleaner import fill_masked_area_rgb, telea_inpaint_masked_area
+
+STRATEGY_TEMPLATE = "Template Deblending"
+STRATEGY_CONTAINER_FILL = "Container-Aware Adaptive Fill (remover)"
+STRATEGY_SUBTRACTIVE = "Bounded Subtractive"
+STRATEGY_TELEA = "Telea Inpainting"
+
+STRATEGY_CHOICES = [
+    STRATEGY_TEMPLATE,
+    STRATEGY_CONTAINER_FILL,
+    STRATEGY_SUBTRACTIVE,
+    STRATEGY_TELEA,
+]
 
 # --- two-tone split (Defect 2 fix) ----------------------------------------
 #
@@ -221,45 +234,31 @@ def _kmeans_two_tone_masks(img_np: np.ndarray, fit_mask_bool: np.ndarray, full_m
     return masks
 
 
-def _estimate_darkening(img_np: np.ndarray, background: np.ndarray, sample_mask_bool: np.ndarray,
-                         fallback_mask_bool: np.ndarray, q: float = _DARKENING_PERCENTILE) -> np.ndarray:
-    """Per-channel darkening vector D = percentile_q(background - observed)
-    over sample_mask_bool (expected to be a non-dark-ink subset -- see
-    module docstring for why real ink must be excluded from ESTIMATION even
-    though it is no longer excluded from where the correction is applied),
-    with content outliers trimmed before the percentile (see the long
-    module-level comment above _DARKENING_PERCENTILE for why the untrimmed
-    percentile is itself contaminated by rule/text-edge pixels straddling
-    the is_dark_ink cutoff).
+def _estimate_darkening(
+    img_np: np.ndarray,
+    background: np.ndarray,
+    sample_mask_bool: np.ndarray,
+    fallback_mask_bool: np.ndarray,
+    q: float = _DARKENING_PERCENTILE,
+    is_bright_mark: bool = False,
+) -> np.ndarray:
+    """Per-channel darkening/brightening vector D over sample_mask_bool
+    (expected to be a non-ink subset), with content outliers trimmed.
 
-    Falls back to fallback_mask_bool (a larger, ink-included set) when the
-    sample is too small to trust (_MIN_DARKENING_SAMPLE_PIXELS), and to the
-    untrimmed set when too few pixels survive the outlier trim
-    (_MIN_TRIM_KEEP_PIXELS) to trust the trimmed set either. If even after
-    both fallbacks the final sample is still tiny (a handful of pixels --
-    e.g. a sliver instance left over after a higher-confidence instance's
-    mask already claimed most of its area, see the `handled` bookkeeping in
-    clean_document_segment), a high percentile of a handful of points is
-    little more than "the largest of a few noisy samples" -- measured on
-    two such slivers on 0_3fafdb3957.jpg (11 and 28 non-ink pixels, no
-    larger fallback available because the sliver itself is the whole
-    instance), the percentile alone gave 46.5 and 25.7 against every
-    same-tone instance elsewhere on the page reading ~12; the median of the
-    same tiny samples is far more stable, so it's used instead once the
-    sample is this small. Clamped to [0, _D_CEILING] per channel: never a
-    negative "brightening" correction, never an unbounded one.
+    When `is_bright_mark` is True (e.g. translucent white watermark on dark/colored banner),
+    diff is (observed - background) and D measures excess lightness to subtract.
+    When `is_bright_mark` is False (standard mark on paper), diff is (background - observed)
+    and D measures darkening to add back.
     """
     use_mask = sample_mask_bool if int(np.sum(sample_mask_bool)) >= _MIN_DARKENING_SAMPLE_PIXELS else fallback_mask_bool
     if not np.any(use_mask):
         return np.zeros(3, dtype=np.float64)
-    diff = background[use_mask].astype(np.float64) - img_np[use_mask].astype(np.float64)
 
-    # Trim: real content (a rule, a text edge) sitting under a handful of
-    # this instance's mask pixels is far darker than the mark itself, so it
-    # shows up as a luminance-darkening outlier relative to the sample's own
-    # median -- which tracks the mark, since mark-over-paper pixels
-    # dominate the sample by construction (non-dark-ink already excludes
-    # solid real ink).
+    if is_bright_mark:
+        diff = img_np[use_mask].astype(np.float64) - background[use_mask].astype(np.float64)
+    else:
+        diff = background[use_mask].astype(np.float64) - img_np[use_mask].astype(np.float64)
+
     lum_diff = diff @ _LUMA_WEIGHTS
     med = float(np.median(lum_diff))
     keep = lum_diff <= (_TRIM_MULT * med + _TRIM_OFFSET)
@@ -272,19 +271,19 @@ def _estimate_darkening(img_np: np.ndarray, background: np.ndarray, sample_mask_
     return np.clip(D, 0.0, _D_CEILING)
 
 
-def _bounded_subtractive_correct(img_np: np.ndarray, background: np.ndarray, mask_bool: np.ndarray, D: np.ndarray) -> np.ndarray:
-    """Recovers pixels under `mask_bool` by adding back only the mark's own
-    darkening `D`, never by replacing them with a background estimate (see
-    module docstring for why this replaces unmix_region on this path).
+def _bounded_subtractive_correct(
+    img_np: np.ndarray,
+    background: np.ndarray,
+    mask_bool: np.ndarray,
+    D: np.ndarray,
+    is_bright_mark: bool = False,
+) -> np.ndarray:
+    """Recovers pixels under `mask_bool` by bounded correction along vector `D`.
 
-    Per pixel: coverage c = clip(dot(bg - obs, D) / dot(D, D), 0, 1);
-    out = clip(obs + c * D, 0, 255). The largest possible change to any
-    pixel is exactly D (when c clips to 1), regardless of how dark or light
-    that pixel started -- structurally impossible to erase content, only to
-    lighten it by at most D.
-
-    Returns the corrected uint8 RGB values for mask_bool's True pixels
-    (shape (N, 3)), suitable for direct assignment via cleaned[mask_bool].
+    When `is_bright_mark` is False (dark mark on light paper):
+      adds back at most D (out = obs + c * D).
+    When `is_bright_mark` is True (light mark on dark banner):
+      subtracts at most D (out = obs - c * D).
     """
     obs = img_np[mask_bool].astype(np.float64)
     Dv = D.astype(np.float64)
@@ -292,138 +291,152 @@ def _bounded_subtractive_correct(img_np: np.ndarray, background: np.ndarray, mas
     if denom < 1e-6:
         return obs.astype(np.uint8)
     bg = background[mask_bool].astype(np.float64)
-    diff = bg - obs
-    c = np.clip((diff @ Dv) / denom, 0.0, 1.0)
-    out = obs + c[:, None] * Dv[None, :]
+
+    if is_bright_mark:
+        diff = obs - bg
+        c = np.clip((diff @ Dv) / denom, 0.0, 1.0)
+        out = obs - c[:, None] * Dv[None, :]
+    else:
+        diff = bg - obs
+        c = np.clip((diff @ Dv) / denom, 0.0, 1.0)
+        out = obs + c[:, None] * Dv[None, :]
+
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-def clean_document_segment(img_np: np.ndarray, conf: float = 0.25, model_choice: str = "Finetuned (AriaTender)",
-                            use_sam: bool = True, use_template: bool = True):
-    """Removes watermark instances found by detect_watermark_masks, one
-    instance at a time, using a per-instance local background (never a
-    page-wide flat estimate -- see segmenter.local_ring_background).
+def clean_document_segment(
+    img_np: np.ndarray,
+    conf: float = 0.25,
+    model_choice: str = "Finetuned (AriaTender)",
+    use_sam: bool = True,
+    use_template: bool = True,
+    removal_strategy: str = STRATEGY_TEMPLATE,
+    allow_colored_bg: bool = True,
+):
+    """Removes watermark instances found by detect_watermark_masks.
 
-    Two removal paths, selected per-instance:
-    - Template registration (see template_match.py), used whenever
-      ``use_template`` is True AND that instance registers above
-      template_match.REGISTRATION_SCORE_THRESHOLD: the mark's own
-      calibrated alpha/ink are KNOWN per pixel rather than inferred from
-      brightness, so the deblend has no brightness-vs-brightness tie to
-      break between mark and table-rule pixels (see template_match.py's
-      module docstring) and no cap -- it clears the mark fully instead of
-      leaving the grey "ghost" the bounded path leaves on ~half of every
-      instance's pixels.
-    - The bounded subtractive correction below (unchanged from before this
-      was added -- Defect 3's fix, see the rest of this module's
-      docstring), used whenever ``use_template`` is False, template
-      registration isn't available at all (e.g. scripts/wm_dataset isn't
-      on this checkout), or this particular instance's best registration
-      score falls below threshold. This is the revert path: with
-      ``use_template=False`` this function is byte-identical to the
-      pre-template-registration implementation (verified with
-      np.array_equal -- see the verification report), so the feature can
-      be backed out at runtime, not just via git.
-
-    Defaults now point at the finetuned direct-mask model
-    ("Finetuned (AriaTender)") at conf=0.25 -- the confidence measured
-    clean over all 73 wm_testset/images pages (see segmenter.py's
-    _SEG_OPAQUE_REJECT_ALPHA comment for the supporting numbers); the old
-    default of conf=0.15 was tuned for the two legacy box detectors, not
-    this model. ``use_sam`` is kept in the signature for the two legacy
-    model choices ("Both (Union)", "YOLO11s", "YOLO11 General") -- it is
-    ignored on the finetuned path, which never runs SAM at all (see
-    detect_watermark_masks's routing).
-
-    Returns (cleaned_np uint8 HxWx3, status) where status is a dict with:
-      instances_found, instances_accepted, instances_rejected,
-      coverage (fraction of page cleaned), used_sam, sam_error,
-      detect_ms, refine_ms, unmix_ms, total_ms, message (human string),
-      use_template, template_page_registration, instance_registrations
-      (per-instance score/scale/angle/mark_id/fell_back -- see
-      template_match.register_instance), template_used_count,
-      template_fallback_count
+    Supported removal strategies:
+    - STRATEGY_TEMPLATE ("Template Deblending"): Registers calibrated AriaTender mark,
+      deblending mathematically (clears mark completely with zero grey ghost). Falls back
+      to bounded subtractive per-instance if registration score is low.
+    - STRATEGY_CONTAINER_FILL ("Container-Aware Adaptive Fill (remover)"): Ports Desktop/remover's
+      border-bounded local fill, preventing color leakage across cells/borders without templates.
+    - STRATEGY_SUBTRACTIVE ("Bounded Subtractive"): Adds back estimated darkening vector D,
+      bounded so it cannot erase rules or text.
+    - STRATEGY_TELEA ("Telea Inpainting"): Fast classical inpainting inside the mask.
     """
     t0 = time.time()
-    mask, meta = detect_watermark_masks(img_np, conf=conf, model_choice=model_choice, use_sam=use_sam)
+    mask, meta = detect_watermark_masks(
+        img_np,
+        conf=conf,
+        model_choice=model_choice,
+        use_sam=use_sam,
+        allow_colored_bg=allow_colored_bg,
+    )
 
     cleaned = img_np.copy()
     handled = np.zeros(img_np.shape[:2], dtype=bool)
 
     accepted_instances = [inst for inst in meta["instances"] if inst["accepted"]]
-    # Higher-confidence instances win any overlap (rare post-NMS, but SAM's
-    # oriented masks can still overlap slightly where boxes from the two
-    # models nearly but not quite matched) -- process most confident first
-    # and only ever touch pixels no earlier (more confident) instance has
-    # already resolved.
     accepted_instances.sort(key=lambda inst: -inst["conf"])
 
-    # One page-level (mark_id, scale, angle) fit, shared by every instance's
-    # translation-only refine below (see template_match.py's module
-    # docstring for why scale/rotation are page-level but translation is
-    # not). Computed once here, never inside the per-instance loop -- the
-    # whole point of the two-stage design is that the expensive (scale x
-    # angle) grid search only ever runs on a handful of instances.
-    template_page_reg = {"available": False}
-    instance_registrations = []
-    if use_template:
-        template_page_reg = template_match.fit_page_registration(img_np, accepted_instances)
-
-    # Used ONLY to decide which pixels are trustworthy samples for
-    # ESTIMATING a mark's color/darkening (real dark ink mixed into that
-    # sample would bias it) -- no longer used to decide which pixels get
-    # corrected (see module docstring, Defect 3: that exclusion is what
-    # produced the dashed-rule regression, and it is not load-bearing for
-    # safety once the correction itself is bounded by D).
     _gray_full = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
     _otsu, _ = cv2.threshold(_gray_full, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    is_dark_ink = _gray_full < (float(_otsu) - 15.0)
+    page_dark_ink = _gray_full < (float(_otsu) - 15.0)
+
+    def _get_inst_ink_and_polarity(inst):
+        m_bool = inst["mask"] > 0
+        bg = inst.get("background")
+        if bg is None:
+            bg = local_ring_background(img_np, inst["mask"])
+        bg_g = cv2.cvtColor(bg, cv2.COLOR_RGB2GRAY)
+        bg_lum = float(np.median(bg_g[m_bool])) if np.any(m_bool) else 255.0
+        if bg_lum < 140.0:
+            # Dark or saturated colored background: protect solid bright foreground text
+            is_ink = _gray_full > (bg_g + 40.0)
+            is_bright = True
+        else:
+            # Light paper background: protect dark body text and table rules
+            is_ink = page_dark_ink
+            is_bright = False
+        return bg, is_ink, is_bright
+
+    # Respect legacy use_template=False toggle
+    if not use_template and removal_strategy == STRATEGY_TEMPLATE:
+        removal_strategy = STRATEGY_SUBTRACTIVE
+
+    template_page_reg = {"available": False}
+    instance_registrations = []
 
     t_unmix0 = time.time()
-    for inst in accepted_instances:
-        full_mask_bool = (inst["mask"] > 0) & (~handled)
-        if not np.any(full_mask_bool):
-            continue
-        background = inst.get("background")
-        if background is None:
-            background = local_ring_background(img_np, inst["mask"])
 
-        # Template registration first (see this function's docstring for
-        # when it's tried and when it isn't). Two-tone splitting is not
-        # needed on this path: the template's per-pixel ink colour already
-        # carries the grey-lettering/pink-shield distinction the
-        # k-means split exists to recover on the bounded path (see
-        # _kmeans_two_tone_masks's module comment), so a registered
-        # instance is deblended in one pass over its whole mask.
-        used_template = False
-        if use_template:
-            corrected_t, treg_info = template_match.register_instance(img_np, inst, template_page_reg, full_mask_bool)
-            instance_registrations.append({"box": inst["box"], "conf": inst["conf"], **treg_info})
-            if corrected_t is not None:
-                cleaned[full_mask_bool] = corrected_t
-                used_template = True
+    if removal_strategy == STRATEGY_CONTAINER_FILL:
+        union_mask = np.zeros(img_np.shape[:2], dtype=bool)
+        protected_ink = np.zeros(img_np.shape[:2], dtype=bool)
+        for inst in accepted_instances:
+            m_bool = inst["mask"] > 0
+            union_mask |= m_bool
+            _, is_ink, _ = _get_inst_ink_and_polarity(inst)
+            protected_ink |= (m_bool & is_ink)
+        fill_mask = union_mask & (~protected_ink)
+        cleaned = fill_masked_area_rgb(img_np, fill_mask)
+        unmix_ms = (time.time() - t_unmix0) * 1000
 
-        if not used_template:
-            non_ink_mask_bool = full_mask_bool & (~is_dark_ink)
+    elif removal_strategy == STRATEGY_TELEA:
+        union_mask = np.zeros(img_np.shape[:2], dtype=bool)
+        protected_ink = np.zeros(img_np.shape[:2], dtype=bool)
+        for inst in accepted_instances:
+            m_bool = inst["mask"] > 0
+            union_mask |= m_bool
+            _, is_ink, _ = _get_inst_ink_and_polarity(inst)
+            protected_ink |= (m_bool & is_ink)
+        fill_mask = union_mask & (~protected_ink)
+        cleaned = telea_inpaint_masked_area(img_np, fill_mask)
+        unmix_ms = (time.time() - t_unmix0) * 1000
 
-            # Defect 2: try splitting into up to 2 color clusters (see
-            # _kmeans_two_tone_masks), fit on non-ink pixels but covering the
-            # FULL mask (ink included) once trustworthy. Returns
-            # [full_mask_bool] unchanged when the split isn't trustworthy, in
-            # which case this is exactly the single-correction path.
-            cluster_masks = _kmeans_two_tone_masks(img_np, non_ink_mask_bool, full_mask_bool)
-            for cluster_mask_bool in cluster_masks:
-                if not np.any(cluster_mask_bool):
-                    continue
-                cluster_non_ink_bool = cluster_mask_bool & (~is_dark_ink)
-                # Defect 3: bounded subtractive correction, not an alpha unmix
-                # (see module docstring for why unmix_region is ill-conditioned
-                # once mark_color sits this close to the local background).
-                D = _estimate_darkening(img_np, background, cluster_non_ink_bool, fallback_mask_bool=non_ink_mask_bool)
-                corrected = _bounded_subtractive_correct(img_np, background, cluster_mask_bool, D)
-                cleaned[cluster_mask_bool] = corrected
-        handled |= full_mask_bool
-    unmix_ms = (time.time() - t_unmix0) * 1000
+    else:
+        do_template = (removal_strategy == STRATEGY_TEMPLATE)
+        if do_template:
+            template_page_reg = template_match.fit_page_registration(img_np, accepted_instances)
+
+        for inst in accepted_instances:
+            full_mask_bool = (inst["mask"] > 0) & (~handled)
+            if not np.any(full_mask_bool):
+                continue
+            background, inst_ink, is_bright_mark = _get_inst_ink_and_polarity(inst)
+
+            used_template = False
+            if do_template and not is_bright_mark:
+                corrected_t, treg_info = template_match.register_instance(img_np, inst, template_page_reg, full_mask_bool)
+                instance_registrations.append({"box": inst["box"], "conf": inst["conf"], **treg_info})
+                if corrected_t is not None:
+                    cleaned[full_mask_bool] = corrected_t
+                    used_template = True
+
+            if not used_template:
+                non_ink_mask_bool = full_mask_bool & (~inst_ink)
+                cluster_masks = _kmeans_two_tone_masks(img_np, non_ink_mask_bool, full_mask_bool)
+                for cluster_mask_bool in cluster_masks:
+                    if not np.any(cluster_mask_bool):
+                        continue
+                    cluster_non_ink_bool = cluster_mask_bool & (~inst_ink)
+                    D = _estimate_darkening(
+                        img_np,
+                        background,
+                        cluster_non_ink_bool,
+                        fallback_mask_bool=non_ink_mask_bool,
+                        is_bright_mark=is_bright_mark,
+                    )
+                    corrected = _bounded_subtractive_correct(
+                        img_np,
+                        background,
+                        cluster_mask_bool,
+                        D,
+                        is_bright_mark=is_bright_mark,
+                    )
+                    cleaned[cluster_mask_bool] = corrected
+            handled |= full_mask_bool
+        unmix_ms = (time.time() - t_unmix0) * 1000
 
     total_ms = (time.time() - t0) * 1000
 
@@ -432,11 +445,7 @@ def clean_document_segment(img_np: np.ndarray, conf: float = 0.25, model_choice:
     n_rejected = meta["rejected_count"]
     coverage_pct = meta["coverage"] * 100
 
-    # The finetuned model emits masks directly -- there is no YOLO-box /
-    # MobileSAM stage on that path at all (see segmenter.detect_watermark_masks's
-    # routing), so the two legacy sam_note phrasings ("MobileSAM refinement" /
-    # "raw YOLO boxes ...") would both misdescribe what actually ran.
-    if model_choice == "Finetuned (AriaTender)":
+    if is_direct_mask_model(model_choice):
         sam_note = "the finetuned model's own direct instance masks (no YOLO boxes, no SAM)"
     elif meta["used_sam"]:
         sam_note = "MobileSAM refinement"
@@ -447,24 +456,30 @@ def clean_document_segment(img_np: np.ndarray, conf: float = 0.25, model_choice:
 
     template_used_count = sum(1 for r in instance_registrations if not r.get("fell_back"))
     template_fallback_count = sum(1 for r in instance_registrations if r.get("fell_back"))
-    template_note = ""
-    if use_template:
+
+    if removal_strategy == STRATEGY_CONTAINER_FILL:
+        strategy_note = " Applied container-aware adaptive fill (remover) bounded by cell/table borders."
+    elif removal_strategy == STRATEGY_TELEA:
+        strategy_note = " Applied Telea inpainting."
+    elif removal_strategy == STRATEGY_SUBTRACTIVE:
+        strategy_note = " Applied bounded subtractive correction."
+    else:
         if template_page_reg.get("available"):
-            template_note = (
+            strategy_note = (
                 f" Template registration ({template_page_reg['mark_id']}, "
                 f"scale {template_page_reg['scale']:.3f}, angle {template_page_reg['angle_deg']:.1f} deg): "
                 f"{template_used_count}/{len(instance_registrations)} instance(s) registered, "
                 f"{template_fallback_count} fell back to the bounded correction."
             )
         else:
-            template_note = " Template registration unavailable -- all instances used the bounded correction."
+            strategy_note = " Template registration unavailable -- all instances used the bounded correction."
 
     message = (
         f"Method 3 (segmentation-driven): {n_found} candidate instance(s) detected, "
         f"{n_accepted} accepted / {n_rejected} rejected by the opaque-ink filter, "
         f"using {sam_note}. Cleaned {coverage_pct:.2f}% of the page in {total_ms:.1f} ms "
         f"(detect {meta['detect_ms']:.1f} ms, refine {meta['refine_ms']:.1f} ms, unmix {unmix_ms:.1f} ms)."
-        f"{template_note}"
+        f"{strategy_note}"
     )
 
     status = {
@@ -479,6 +494,7 @@ def clean_document_segment(img_np: np.ndarray, conf: float = 0.25, model_choice:
         "unmix_ms": unmix_ms,
         "total_ms": total_ms,
         "message": message,
+        "removal_strategy": removal_strategy,
         "use_template": use_template,
         "template_page_registration": template_page_reg,
         "instance_registrations": instance_registrations,

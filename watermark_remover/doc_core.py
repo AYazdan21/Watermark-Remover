@@ -22,9 +22,21 @@ stage, the removal step itself:
   gridline bugs) identical to METHOD_THRESHOLD means any output difference
   between the two methods isolates that one variable.
 
-``METHOD_SEGMENT`` ("Segmentation + Deblending") is a third method being
-built in parallel (``doc_segment.py``) and is only dispatched to here, not
+``METHOD_SEGMENT`` ("Segmentation + Deblending") is a third method built in
+parallel (``doc_segment.py``) and is only dispatched to here, not
 implemented here.
+
+``METHOD_DETECT`` ("Detection + Box Deblending") is a fourth method
+(``doc_detect.py``), also only dispatched to here. Where METHOD_SEGMENT
+detects a tight per-instance mask, METHOD_DETECT detects plain axis-aligned
+boxes with a Detect-head YOLO model (no masks at all) and removes the
+watermark by working inside each box with one of two strategies -- Method
+1's threshold-and-flatten math restricted to the box, or Method 3's bounded
+subtractive correction adapted to the box -- both of which leave real
+content under the mark alone as much as their own math allows, unlike the
+whole-box flat fill this used to be. See ``doc_detect.py``'s module
+docstring for the full story, both strategies' honest limits, and the hard
+invariant.
 """
 import os
 import time
@@ -39,8 +51,9 @@ from .unmixer import unmix_region
 METHOD_THRESHOLD = "Threshold + Flat Fill (Original)"
 METHOD_UNMIX = "Threshold + Alpha Unmixing"
 METHOD_SEGMENT = "Segmentation + Deblending"
+METHOD_DETECT = "Detection + Box Deblending"
 
-METHOD_CHOICES = [METHOD_THRESHOLD, METHOD_UNMIX, METHOD_SEGMENT]
+METHOD_CHOICES = [METHOD_THRESHOLD, METHOD_UNMIX, METHOD_SEGMENT, METHOD_DETECT]
 
 
 def auto_detect_document_profile(img_np):
@@ -198,29 +211,38 @@ def clean_document(
     seg_model: str = "Finetuned (AriaTender)",
     seg_use_sam: bool = True,
     seg_use_template: bool = True,
+    seg_strategy: str = "Template Deblending",
+    seg_allow_colored_bg: bool = True,
+    det_conf: float = 0.25,
+    det_model: str = "YOLO11s Detect (Half-Frozen, New Dataset)",
+    det_box_padding: int = 0,
+    det_strategy: str = "Threshold + Flat Fill (per box)",
+    det_thresh_offset: int = 0,
+    det_anti_alias: bool = True,
+    det_stamp_filter: str = "None (Standard)",
     save_dataset: bool = True,
 ):
     """
     De-blends semi-transparent watermarks and colored stamps from document scans
     while preserving outer white margins, inner paper tints, and optional table gridlines.
 
-    ``method`` selects which of the three Document-tab algorithms runs:
-    METHOD_THRESHOLD (M1), METHOD_UNMIX (M2), or METHOD_SEGMENT (M3, delegated
-    to ``doc_segment.py``). ``save_dataset`` gates ALL writes to ``dataset/``
+    ``method`` selects which of the four Document-tab algorithms runs:
+    METHOD_THRESHOLD (M1), METHOD_UNMIX (M2), METHOD_SEGMENT (M3, delegated
+    to ``doc_segment.py``), or METHOD_DETECT (M4, delegated to
+    ``doc_detect.py``). ``save_dataset`` gates ALL writes to ``dataset/``
     -- when False, nothing is written, for any method.
 
-    ``seg_conf``/``seg_model``/``seg_use_sam``/``seg_use_template`` are
+    ``seg_conf``/``seg_model``/``seg_use_sam``/``seg_use_template``/``seg_strategy``/``seg_allow_colored_bg`` are
     M3-only and passed straight through to
-    ``doc_segment.clean_document_segment``. Their defaults now point at the
-    finetuned direct-mask model ("Finetuned (AriaTender)") at conf=0.25 --
-    see that function's docstring and segmenter.py's
-    _SEG_OPAQUE_REJECT_ALPHA comment for the measurements behind both
-    numbers. ``seg_use_sam`` only affects the two legacy model choices; the
-    finetuned model never runs SAM. ``seg_use_template`` is the toggle for
-    the newer template-registration removal path (see template_match.py
-    and doc_segment.clean_document_segment's docstring) -- default True;
-    set False to revert M3 to its previous, bounded-subtractive-only
-    behaviour at runtime without touching code.
+    ``doc_segment.clean_document_segment``.
+
+    ``det_conf``/``det_model``/``det_box_padding``/``det_strategy``/
+    ``det_thresh_offset``/``det_anti_alias``/``det_stamp_filter`` are
+    M4-only and passed straight through to
+    ``doc_detect.clean_document_detect``. They sit after the M3 params and
+    before ``save_dataset`` in this signature -- the UI's
+    ``btn_clean_doc.click`` wires its inputs to this function positionally,
+    so that order must be kept in sync with ``ui.py``.
     """
     if method == METHOD_SEGMENT:
         if doc_image is None:
@@ -243,6 +265,8 @@ def clean_document(
             model_choice=seg_model,
             use_sam=seg_use_sam,
             use_template=seg_use_template,
+            removal_strategy=seg_strategy,
+            allow_colored_bg=seg_allow_colored_bg,
         )
 
         seg_index = None
@@ -254,6 +278,43 @@ def clean_document(
         save_note = f"\nSaved to `dataset/cleaned_documents/{seg_index}_cleaned.png`" if seg_index is not None else ""
         message = seg_status.get("message") if isinstance(seg_status, dict) else str(seg_status)
         return Image.fromarray(cleaned_np), f"[M3: Segmentation + Deblending] {message}{save_note}"
+
+    if method == METHOD_DETECT:
+        if doc_image is None:
+            return None, "Please upload a document image first."
+        try:
+            from .doc_detect import clean_document_detect
+        except ImportError:
+            return None, (
+                "⚠️ Method 4 (Detection + Box Deblending) is not available yet -- "
+                "its implementation module (`watermark_remover/doc_detect.py`) hasn't landed."
+            )
+        # doc_detect works in numpy and reports a structured dict, same
+        # convention as doc_segment -- this dispatcher owns the PIL<->numpy
+        # conversion, the status rendering and the dataset save, so all four
+        # methods present one interface to the UI and honour save_dataset
+        # identically.
+        det_np = np.array(doc_image.convert("RGB"))
+        cleaned_np, det_status = clean_document_detect(
+            det_np,
+            conf=det_conf,
+            model_choice=det_model,
+            box_padding=int(det_box_padding),
+            removal_strategy=det_strategy,
+            thresh_offset=int(det_thresh_offset),
+            anti_alias=det_anti_alias,
+            stamp_filter=det_stamp_filter,
+        )
+
+        det_index = None
+        if save_dataset:
+            det_index = len(os.listdir(CLEANED_DOCS_DIR)) + 1
+            Image.fromarray(cleaned_np).save(os.path.join(CLEANED_DOCS_DIR, f"{det_index}_cleaned.png"))
+            Image.fromarray(det_np).save(os.path.join(DOCUMENT_ORIGINALS_DIR, f"{det_index}_original.png"))
+
+        save_note = f"\nSaved to `dataset/cleaned_documents/{det_index}_cleaned.png`" if det_index is not None else ""
+        message = det_status.get("message") if isinstance(det_status, dict) else str(det_status)
+        return Image.fromarray(cleaned_np), f"[M4: Detection + Box Deblending] {message}{save_note}"
 
     if doc_image is None:
         return None, "Please upload a document image first."

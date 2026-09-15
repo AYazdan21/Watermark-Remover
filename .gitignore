@@ -54,5 +54,21 @@ wm_dataset_colab.zip
 wm_backgrounds_v2/
 wm_dataset_v2/
 
+# alpha-regression dataset (images/alpha/clean triples, --save-clean) --
+# large, reproducible from generate.py + seed, not source.
+wm_dataset_alpha/
+
 # ultralytics writes its settings/assets here
 Ultralytics/
+
+# Local scratch outputs: debug snapshots, overlay dumps, model-eval runs
+outputs/
+model_eval/
+runs/
+
+# Zipped dataset / test-set bundles
+archives/
+
+# More locally staged real images (provenance varies; keep local)
+images_scraped2/
+Images-wm/

@@ -1,7 +1,10 @@
 import gradio as gr
 
 from . import doc_core
-from .doc_debug import debug_detect
+from .detector import DETECT_MODEL_CHOICES
+from .doc_debug import debug_detect, debug_detect_boxes
+from .doc_detect import STRATEGY_CHOICES as DETECT_STRATEGY_CHOICES
+from .segmenter import SEG_MODEL_CHOICES
 from .photo_inpainter import (
     auto_detect_watermark,
     auto_detect_and_inpaint,
@@ -75,14 +78,15 @@ def build_ui():
                     doc_input = gr.Image(label="1. Upload Document Image", type="pil")
 
                     method_radio = gr.Radio(
-                        choices=[doc_core.METHOD_THRESHOLD, doc_core.METHOD_UNMIX, doc_core.METHOD_SEGMENT],
+                        choices=doc_core.METHOD_CHOICES,
                         value=doc_core.METHOD_THRESHOLD,
                         label="Cleaning Method",
                         info=(
                             "M1 is the original bug-for-bug algorithm (flat background fill). "
                             "M2 is identical to M1 except it recovers the true pixel via alpha "
                             "unmixing instead of flattening it. M3 segments and deblends the "
-                            "watermark (separate settings below)."
+                            "watermark (separate settings below). M4 detects boxes with a YOLO "
+                            "detection model and deblends inside each box (separate settings below)."
                         ),
                     )
 
@@ -165,27 +169,112 @@ def build_ui():
                             )
                         with gr.Row():
                             seg_model_select = gr.Dropdown(
-                                choices=["Finetuned (AriaTender)", "Both (Union)", "YOLO11s", "YOLO11 General"],
+                                choices=SEG_MODEL_CHOICES,
                                 value="Finetuned (AriaTender)",
                                 label="Segmentation Model",
-                                info="Finetuned (AriaTender) emits masks directly and is the recommended default; the other three are legacy box detectors refined with SAM.",
+                                info="Finetuned models emit masks directly and are recommended; the other three are legacy box detectors refined with SAM.",
                             )
                             seg_use_sam_chk = gr.Checkbox(
                                 label="Refine with SAM",
                                 value=True,
-                                info="Uses Mobile-SAM to refine detected boxes into precise masks before deblending. Ignored when Segmentation Model = Finetuned (AriaTender), which emits masks directly and never runs SAM.",
+                                info="Uses Mobile-SAM to refine detected boxes into precise masks before deblending. Ignored when using Finetuned models, which emit masks directly and never run SAM.",
                             )
                         with gr.Row():
-                            seg_use_template_chk = gr.Checkbox(
-                                label="🧪 Experimental: Template-registered removal (recommended, revertible)",
-                                value=True,
+                            seg_strategy_select = gr.Radio(
+                                choices=[
+                                    "Template Deblending",
+                                    "Container-Aware Adaptive Fill (remover)",
+                                    "Bounded Subtractive",
+                                    "Telea Inpainting",
+                                ],
+                                value="Template Deblending",
+                                label="Removal Strategy",
                                 info=(
-                                    "Registers the real, calibrated AriaTender mark to each detected instance so "
-                                    "per-pixel opacity is known instead of guessed from brightness -- clears the "
-                                    "watermark fully instead of leaving a faint grey ghost, without the risk of "
-                                    "erasing table rules. Falls back to the older bounded correction per-instance "
-                                    "when registration doesn't score well. Uncheck to revert Method 3 entirely to "
-                                    "its previous behaviour (bit-identical) if this path misbehaves on your documents."
+                                    "Algorithm applied inside detected masks. 'Container-Aware' infills bounded by table/cell "
+                                    "borders to stop color bleed; 'Template' deblends calibrated AriaTender marks; "
+                                    "'Bounded Subtractive' is the rule-safe fallback."
+                                ),
+                            )
+                        with gr.Row():
+                            seg_allow_colored_bg_chk = gr.Checkbox(
+                                label="Allow Watermarks on Colored / Saturated Banners",
+                                value=True,
+                                info="Allows watermark detection and removal inside colored headers and banners instead of treating them as UI chrome.",
+                            )
+                            seg_use_template_chk = gr.Checkbox(
+                                label="🧪 Revertible template fallback toggle (Legacy)",
+                                value=True,
+                                visible=False,
+                                info="Kept for backward compatibility.",
+                            )
+
+                    with gr.Group(visible=False) as m4_settings_group:
+                        with gr.Row():
+                            det_conf_slider = gr.Slider(
+                                minimum=0.05,
+                                maximum=0.9,
+                                value=0.25,
+                                step=0.01,
+                                label="Detection Confidence",
+                                info="Lower catches fainter/smaller watermark boxes; higher is stricter.",
+                            )
+                        with gr.Row():
+                            det_model_select = gr.Dropdown(
+                                choices=DETECT_MODEL_CHOICES,
+                                value=DETECT_MODEL_CHOICES[0],
+                                label="Detection Model",
+                                info="A plain box-detection YOLO model (no masks) trained on this project's watermarks.",
+                            )
+                        with gr.Row():
+                            det_box_padding_slider = gr.Slider(
+                                minimum=0,
+                                maximum=20,
+                                value=0,
+                                step=1,
+                                label="Box Padding (px)",
+                                info="Expands each detected box before filling, to cover anti-aliased edges.",
+                            )
+                        with gr.Row():
+                            det_strategy_select = gr.Radio(
+                                choices=DETECT_STRATEGY_CHOICES,
+                                value=DETECT_STRATEGY_CHOICES[0],
+                                label="Removal Strategy",
+                                info=(
+                                    "Threshold + Flat Fill: Method 1's threshold math restricted to each box -- "
+                                    "only pixels brighter than the page's Otsu threshold are flattened to a "
+                                    "per-pixel background estimate (each pixel's own row-container background, "
+                                    "not one flat colour for the whole box), so real dark ink survives. Bounded "
+                                    "Subtractive: Method 3's bounded correction adapted to a box -- adds back at "
+                                    "most an estimated darkening amount per pixel against that same per-pixel "
+                                    "background, never replaces outright, and never touches pixels classified "
+                                    "as real ink. Alpha Network: removes the mark by inverting a trained "
+                                    "network's predicted per-pixel opacity (closed-form, no background estimate) "
+                                    "-- needs weights/alpha_net_best_final.pt, and does nothing (with a message) if "
+                                    "that file isn't present."
+                                ),
+                            )
+                        with gr.Row():
+                            det_thresh_slider = gr.Slider(
+                                minimum=-40,
+                                maximum=40,
+                                value=0,
+                                step=2,
+                                label="Threshold Fine-Tuning",
+                                info="0 = automatic page Otsu. Threshold + Flat Fill only.",
+                            )
+                        with gr.Row():
+                            det_anti_alias_chk = gr.Checkbox(
+                                label="Soft Anti-Aliasing",
+                                value=True,
+                                info="Threshold + Flat Fill only.",
+                            )
+                            det_stamp_filter_select = gr.Dropdown(
+                                choices=["None (Standard)", "Red Stamp Filter", "Blue Stamp Filter"],
+                                value="None (Standard)",
+                                label="Stamp Color Filter",
+                                info=(
+                                    "Which channel the threshold reads -- pick Red for pink/red marks so they "
+                                    "read as bright and get removed. Threshold + Flat Fill only."
                                 ),
                             )
 
@@ -202,14 +291,15 @@ def build_ui():
 
             def _toggle_doc_method_groups(method):
                 return (
-                    gr.update(visible=(method != doc_core.METHOD_SEGMENT)),
+                    gr.update(visible=(method in (doc_core.METHOD_THRESHOLD, doc_core.METHOD_UNMIX))),
                     gr.update(visible=(method == doc_core.METHOD_SEGMENT)),
+                    gr.update(visible=(method == doc_core.METHOD_DETECT)),
                 )
 
             method_radio.change(
                 fn=_toggle_doc_method_groups,
                 inputs=[method_radio],
-                outputs=[m1_m2_settings_group, m3_settings_group],
+                outputs=[m1_m2_settings_group, m3_settings_group, m4_settings_group],
             )
 
             btn_clean_doc.click(
@@ -230,6 +320,15 @@ def build_ui():
                     seg_model_select,
                     seg_use_sam_chk,
                     seg_use_template_chk,
+                    seg_strategy_select,
+                    seg_allow_colored_bg_chk,
+                    det_conf_slider,
+                    det_model_select,
+                    det_box_padding_slider,
+                    det_strategy_select,
+                    det_thresh_slider,
+                    det_anti_alias_chk,
+                    det_stamp_filter_select,
                     save_dataset_chk,
                 ],
                 outputs=[doc_output, doc_status],
@@ -263,15 +362,21 @@ def build_ui():
                         )
                     with gr.Row():
                         debug_model_select = gr.Dropdown(
-                            choices=["Finetuned (AriaTender)", "Both (Union)", "YOLO11s", "YOLO11 General"],
+                            choices=SEG_MODEL_CHOICES,
                             value="Finetuned (AriaTender)",
                             label="Segmentation Model",
-                            info="Finetuned (AriaTender) emits masks directly and is the recommended default; the other three are legacy box detectors refined with SAM.",
+                            info="Finetuned models emit masks directly and are recommended; the other three are legacy box detectors refined with SAM.",
                         )
                         debug_use_sam_chk = gr.Checkbox(
                             label="Refine with SAM",
                             value=True,
-                            info="Uncheck to see the raw YOLO boxes without mask refinement. Ignored when Segmentation Model = Finetuned (AriaTender), which emits masks directly and never runs SAM.",
+                            info="Uncheck to see the raw YOLO boxes without mask refinement. Ignored when using Finetuned models, which emit masks directly and never run SAM.",
+                        )
+                    with gr.Row():
+                        debug_allow_colored_bg_chk = gr.Checkbox(
+                            label="Allow Colored / Saturated Banners",
+                            value=True,
+                            info="Allows watermark detection inside colored document headers and banners.",
                         )
                     btn_debug_detect = gr.Button("🔍 Run Detection", variant="primary", size="lg")
 
@@ -282,8 +387,104 @@ def build_ui():
 
             btn_debug_detect.click(
                 fn=debug_detect,
-                inputs=[debug_input, debug_conf_slider, debug_model_select, debug_use_sam_chk],
+                inputs=[
+                    debug_input,
+                    debug_conf_slider,
+                    debug_model_select,
+                    debug_use_sam_chk,
+                    debug_allow_colored_bg_chk,
+                ],
                 outputs=[debug_output, debug_report],
+            )
+
+        # ==========================================
+        # TAB 1c: Method 4 Detection Debugger
+        # ==========================================
+        with gr.Tab("🔍 M4 Detection Debug"):
+            gr.Markdown(
+                """
+                Runs Method 4's exact detection + fill-colour planning + removal
+                pipeline, but only to **render a diff** -- no pixels are written back
+                to your upload. The amber tint shows exactly the pixels M4 would
+                change inside each box (not the whole box), so you can judge detection
+                and removal quality together before running the real thing.
+                """
+            )
+            with gr.Row():
+                with gr.Column(scale=5):
+                    m4_debug_input = gr.Image(label="1. Upload Document Image", type="pil")
+                    with gr.Row():
+                        m4_debug_conf_slider = gr.Slider(
+                            minimum=0.05,
+                            maximum=0.9,
+                            value=0.25,
+                            step=0.01,
+                            label="Detection Confidence",
+                            info="Same control as Method 4 -- lower catches fainter/smaller boxes.",
+                        )
+                    with gr.Row():
+                        m4_debug_model_select = gr.Dropdown(
+                            choices=DETECT_MODEL_CHOICES,
+                            value=DETECT_MODEL_CHOICES[0],
+                            label="Detection Model",
+                        )
+                    with gr.Row():
+                        m4_debug_box_padding_slider = gr.Slider(
+                            minimum=0,
+                            maximum=20,
+                            value=0,
+                            step=1,
+                            label="Box Padding (px)",
+                            info="Expands each detected box before filling. The raw (unpadded) box is drawn as a thin outline when > 0.",
+                        )
+                    with gr.Row():
+                        m4_debug_strategy_select = gr.Radio(
+                            choices=DETECT_STRATEGY_CHOICES,
+                            value=DETECT_STRATEGY_CHOICES[0],
+                            label="Removal Strategy",
+                            info="Same strategies as Method 4 -- see the 1-Click tab for what each does.",
+                        )
+                    with gr.Row():
+                        m4_debug_thresh_slider = gr.Slider(
+                            minimum=-40,
+                            maximum=40,
+                            value=0,
+                            step=2,
+                            label="Threshold Fine-Tuning",
+                            info="0 = automatic page Otsu. Threshold + Flat Fill only.",
+                        )
+                    with gr.Row():
+                        m4_debug_anti_alias_chk = gr.Checkbox(
+                            label="Soft Anti-Aliasing",
+                            value=True,
+                            info="Threshold + Flat Fill only.",
+                        )
+                        m4_debug_stamp_filter_select = gr.Dropdown(
+                            choices=["None (Standard)", "Red Stamp Filter", "Blue Stamp Filter"],
+                            value="None (Standard)",
+                            label="Stamp Color Filter",
+                            info="Threshold + Flat Fill only.",
+                        )
+                    btn_m4_debug_detect = gr.Button("🔍 Run Detection", variant="primary", size="lg")
+
+                with gr.Column(scale=5):
+                    m4_debug_output = gr.Image(label="2. Detections (boxes + changed-pixel tint)", type="pil")
+
+            m4_debug_report = gr.Markdown(value="Upload a document and click Run Detection.")
+
+            btn_m4_debug_detect.click(
+                fn=debug_detect_boxes,
+                inputs=[
+                    m4_debug_input,
+                    m4_debug_conf_slider,
+                    m4_debug_model_select,
+                    m4_debug_box_padding_slider,
+                    m4_debug_strategy_select,
+                    m4_debug_thresh_slider,
+                    m4_debug_anti_alias_chk,
+                    m4_debug_stamp_filter_select,
+                ],
+                outputs=[m4_debug_output, m4_debug_report],
             )
 
         # ==========================================

@@ -43,6 +43,13 @@ were added (they flagged 40/40 clean pages). Because this model's masks
 hug the glyph strokes far more tightly than a MobileSAM box envelope
 does, the opaque-ink cutoff below needs a separate, higher value on this
 path -- see _SEG_OPAQUE_REJECT_ALPHA.
+
+Three more direct-mask checkpoints of the same shape were added later
+("Finetuned (Half-Frozen)", "Finetuned (Full, New Dataset)", and
+"Finetuned (Half-Frozen, New Dataset)"); all four are registered in
+_DIRECT_MASK_MODELS below (name -> (path, imgsz)) with a single
+lazy-loading getter (get_direct_mask_model) rather than one copy-pasted
+constant/getter pair per model.
 """
 
 import os
@@ -59,24 +66,59 @@ from .unmixer import estimate_mark_color, unmix_region
 # --- model files -------------------------------------------------------
 
 _MODEL_FILES = {
-    "YOLO11s": "yolo11s_watermark.pt",
-    "YOLO11 General": "yolo11_watermark_general.pt",
+    "YOLO11s": os.path.join("weights", "yolo11s_watermark.pt"),
+    "YOLO11 General": os.path.join("weights", "yolo11_watermark_general.pt"),
 }
-_SAM_WEIGHTS = "mobile_sam.pt"
+_SAM_WEIGHTS = os.path.join("weights", "mobile_sam.pt")
 
-# The finetuned direct-mask model. Unlike the two legacy checkpoints above
-# (which sit at BASE_DIR root), this one lives in a weights/ subdirectory --
-# it was dropped there separately after the legacy models were already
-# wired up, so its path is assembled on its own rather than added to
-# _MODEL_FILES (which every legacy caller assumes resolves directly under
-# BASE_DIR).
-_SEG_MODEL_NAME = "Finetuned (AriaTender)"
-_SEG_MODEL_REL_PATH = os.path.join("weights", "best-yolo11-seg.pt")
-_SEG_IMGSZ = 1024  # trained at this resolution on Colab -- do not change.
+# Direct-mask models: finetuned yolo11n-seg checkpoints that emit instance
+# masks directly (no axis-aligned box to refine), so this path skips
+# _detect_boxes and _sam_refine entirely -- see detect_watermark_masks's
+# routing and _detect_seg_masks below. Registered in one ordered dict
+# (name -> (path relative to BASE_DIR, training imgsz)) rather than as
+# separate copy-pasted constants/getters per model, since all three are the
+# same shape (task=segment, single class {0: 'watermark'}):
+#   - "Finetuned (AriaTender)" (weights/best-yolo11-seg.pt): the original
+#     finetune, trained on synthetic composites of the two AriaTender marks
+#     over varied Persian document pages. Lives in a weights/ subdirectory
+#     because it was dropped there separately after the legacy models above
+#     were already wired up.
+#   - "Finetuned (Half-Frozen)" (best-half-frozen.pt): a second finetune,
+#     in weights/.
+#   - "Finetuned (Full, New Dataset)" (yolo11-seg-full-new-dataset.pt): a
+#     third finetune (base yolo11n-seg, single class {0: 'watermark'},
+#     trained at imgsz=1024, freeze=None, 100 epochs) on a newer/fuller
+#     dataset, also in weights/.
+#   - "Finetuned (Half-Frozen, New Dataset)" (yolo11-seg-freeze-new-dataset.pt):
+#     a fourth finetune (base yolo11n-seg, single class {0: 'watermark'},
+#     trained at imgsz=1024, freeze=11, 100 epochs) on the same dataset as
+#     the Full model above, also in weights/ -- the frozen-backbone
+#     counterpart of that model.
+_SEG_MODEL_NAME = "Finetuned (AriaTender)"  # default -- used elsewhere
+_SEG_MODEL_HALF_FROZEN_NAME = "Finetuned (Half-Frozen)"
+_SEG_MODEL_FULL_NEW_DATASET_NAME = "Finetuned (Full, New Dataset)"
+_SEG_MODEL_HALF_FROZEN_NEW_DATASET_NAME = "Finetuned (Half-Frozen, New Dataset)"
+
+_DIRECT_MASK_MODELS = {
+    _SEG_MODEL_NAME: (os.path.join("weights", "best-yolo11-seg.pt"), 1024),
+    _SEG_MODEL_HALF_FROZEN_NAME: (os.path.join("weights", "best-half-frozen.pt"), 1024),
+    _SEG_MODEL_FULL_NEW_DATASET_NAME: (os.path.join("weights", "yolo11-seg-full-new-dataset.pt"), 1024),
+    _SEG_MODEL_HALF_FROZEN_NEW_DATASET_NAME: (os.path.join("weights", "yolo11-seg-freeze-new-dataset.pt"), 1024),
+}
+DIRECT_MASK_MODEL_CHOICES = list(_DIRECT_MASK_MODELS.keys())
+LEGACY_BOX_MODEL_CHOICES = ["Both (Union)", "YOLO11s", "YOLO11 General"]
+SEG_MODEL_CHOICES = DIRECT_MASK_MODEL_CHOICES + LEGACY_BOX_MODEL_CHOICES
 
 _yolo_models = {}
 _sam_model = None
-_seg_model = None
+_direct_mask_models = {}
+
+
+def is_direct_mask_model(name: str) -> bool:
+    """True for any display name registered in _DIRECT_MASK_MODELS -- these
+    route to the direct-mask path (own instance masks, no YOLO boxes, no
+    SAM) instead of the legacy box-detection + SAM-refinement path."""
+    return name in _DIRECT_MASK_MODELS
 
 
 def get_yolo_model(name: str):
@@ -102,18 +144,32 @@ def get_sam_model():
     return _sam_model
 
 
-def get_seg_model():
-    """Lazily loads and caches the finetuned direct-mask watermark model
-    (weights/best-yolo11-seg.pt, display name "Finetuned (AriaTender)").
-    Mirrors get_yolo_model's caching pattern, but resolves under weights/
-    instead of BASE_DIR -- see _SEG_MODEL_REL_PATH."""
-    global _seg_model
-    if _seg_model is None:
-        path = os.path.join(BASE_DIR, _SEG_MODEL_REL_PATH)
+def get_direct_mask_model(name: str = _SEG_MODEL_NAME):
+    """Lazily loads and caches a direct-mask watermark model by its
+    _DIRECT_MASK_MODELS display name. Mirrors get_yolo_model's caching
+    pattern (one shared cache dict keyed by name instead of one global per
+    model)."""
+    if name not in _direct_mask_models:
+        rel_path, _imgsz = _DIRECT_MASK_MODELS.get(name, _DIRECT_MASK_MODELS[_SEG_MODEL_NAME])
+        path = os.path.join(BASE_DIR, rel_path)
         if not os.path.exists(path):
-            raise FileNotFoundError(f"Finetuned segmentation model file {path} not found.")
-        _seg_model = YOLO(path)
-    return _seg_model
+            raise FileNotFoundError(f"Finetuned segmentation model file {path} not found (model: {name!r}).")
+        _direct_mask_models[name] = YOLO(path)
+    return _direct_mask_models[name]
+
+
+def get_seg_model():
+    """Thin wrapper over get_direct_mask_model for the default finetuned
+    direct-mask model ("Finetuned (AriaTender)"). Kept so existing callers
+    of this name keep working."""
+    return get_direct_mask_model(_SEG_MODEL_NAME)
+
+
+def get_seg_model_half_frozen():
+    """Thin wrapper over get_direct_mask_model for the second finetuned
+    direct-mask model ("Finetuned (Half-Frozen)"). Kept so existing callers
+    of this name keep working."""
+    return get_direct_mask_model(_SEG_MODEL_HALF_FROZEN_NAME)
 
 
 # --- box union + NMS -----------------------------------------------------
@@ -230,7 +286,7 @@ def _boxes_to_masks(img_np: np.ndarray, boxes: np.ndarray):
 # --- direct-mask model path (finetuned) ----------------------------------
 
 
-def _detect_seg_masks(img_np: np.ndarray, conf: float, device: str):
+def _detect_seg_masks(img_np: np.ndarray, conf: float, device: str, model_choice: str = "Finetuned (AriaTender)"):
     """Runs the finetuned direct-mask model at imgsz=1024 (the resolution
     it was trained at -- unlike _detect_boxes's hardcoded imgsz=800 for the
     two legacy detectors, which is untouched by this addition) and returns
@@ -248,8 +304,15 @@ def _detect_seg_masks(img_np: np.ndarray, conf: float, device: str):
     intermediate values.
     """
     h, w = img_np.shape[:2]
-    model = get_seg_model()
-    results = model(img_np, conf=conf, imgsz=_SEG_IMGSZ, device=device, verbose=False)
+    if model_choice in _DIRECT_MASK_MODELS:
+        source_name = model_choice
+    else:
+        # Unknown name -- match the previous else-branch behaviour and fall
+        # back to the default finetuned model.
+        source_name = _SEG_MODEL_NAME
+    _rel_path, imgsz = _DIRECT_MASK_MODELS[source_name]
+    model = get_direct_mask_model(source_name)
+    results = model(img_np, conf=conf, imgsz=imgsz, device=device, verbose=False)
     r = results[0]
 
     if r.masks is None or len(r.masks.data) == 0:
@@ -267,7 +330,7 @@ def _detect_seg_masks(img_np: np.ndarray, conf: float, device: str):
         m8 = ((m8 > 127).astype(np.uint8)) * 255
         masks.append(m8)
 
-    sources = [_SEG_MODEL_NAME] * len(masks)
+    sources = [source_name] * len(masks)
     return masks, boxes, scores, sources
 
 
@@ -468,6 +531,62 @@ def _estimate_removal_mark_color(img_np: np.ndarray, mask_bool: np.ndarray, resi
 # little: anything that slips through still can't touch real dark ink.
 _SEG_OPAQUE_REJECT_ALPHA = 0.97
 
+# A second instance-coverage cap, used only on the direct-mask paths (the
+# four _DIRECT_MASK_MODELS). _MAX_INSTANCE_COVERAGE above (0.05) was
+# calibrated against MobileSAM box envelopes -- see that constant's comment:
+# on dataset/document_originals/69, an imprecise box let SAM flood 80%+ of
+# the box, covering 20-26% of the page in a single instance, while no real
+# watermark instance in that set came anywhere close (largest 0.46%). That
+# headroom assumes the mask is a coarse box-derived shape with lots of
+# untouched paper inside it. The direct-mask models have no box to flood --
+# their masks hug the glyph/wordmark strokes themselves (see the module
+# docstring) -- so the same page-area-fraction cap trips on an ordinary
+# large watermark filling a small/cropped page: bad_examples/input-lowres.png
+# (326x169, a large watermark nearly filling a cropped notice) produced
+# three instances at page_coverage 0.093, 0.073 and 0.098 -- all comfortably
+# above 0.05 -- purely because the page is small and the mark is large, not
+# because the mask flooded past the mark.
+#
+# Measured with the cap temporarily lifted to 1.01 (i.e. disabled) on the
+# "Finetuned (Half-Frozen, New Dataset)" model, conf=0.25, imgsz=1024,
+# allow_colored_bg=True, over every image in wm_testset/images (73 real
+# watermarked pages) plus bad_examples/input-lowres.png, recording
+# page_coverage for every instance that passed the other two rules (opaque
+# ink, chrome saturation):
+#   - bad_examples/input-lowres.png (326x169, a large watermark nearly
+#     filling a cropped notice -- the case this fix targets) produced 9
+#     accepted instances topping out at page_coverage 0.0977, 0.0933, 0.0734
+#     -- all >= the old 0.05 cap purely because the page is tiny and the
+#     mark is large, not because the mask flooded past it.
+#   - This exact image is ALSO present in wm_testset/images, byte-identical,
+#     as 82_original.png (confirmed via direct pixel diff) -- so it was
+#     excluded when computing the "real watermark" ceiling below to avoid
+#     circularity.
+#   - The other 72 wm_testset/images pages: max page_coverage 0.0225
+#     (70_original.png), p99 0.0189, p95 0.0163, p90 0.0080, across 985
+#     instances that otherwise passed. Every one of these is comfortably
+#     below the old 0.05 cap already -- this dataset has no other case that
+#     motivates raising it, only 82_original.png/input-lowres.png does.
+# No real, non-synthetic CLEAN (no-watermark) pages were found anywhere in
+# the repo to measure a false-accept ceiling against -- dataset/originals
+# and dataset/document_originals are both entirely real WATERMARKED pages
+# (see backgrounds.py's own "16/16 real watermarked pages" note and this
+# module's docstring), and wm_testset/ has no negatives either (README.md
+# describes the negative convention but the checked-in set has no labels
+# directory at all, let alone an empty label file to identify one).
+# wm_backgrounds/ and wm_backgrounds_v2/ look like real document pages but
+# are procedurally generated by gen_persian_docs.py, not scans of real
+# documents, so they aren't used here as a stand-in either.
+#
+# 0.5 sits well above every instance measured above -- roughly 5x the
+# target case's max (0.0977) and 22x the other real pages' max (0.0225) --
+# while still catching a degenerate mask that has flooded past a single
+# watermark instance to cover half the page or more, the same kind of
+# failure _MAX_INSTANCE_COVERAGE guards against on the legacy path, just at
+# a cap sized for masks that hug glyph strokes instead of a coarse SAM
+# envelope.
+_SEG_MAX_INSTANCE_COVERAGE = 0.5
+
 
 def _ink_subset(residual: np.ndarray, mask_bool: np.ndarray) -> np.ndarray:
     """The subset of an instance's mask most likely to be actual mark/ink,
@@ -484,7 +603,13 @@ def _ink_subset(residual: np.ndarray, mask_bool: np.ndarray) -> np.ndarray:
     return ink_bool
 
 
-def _classify_instance(img_np: np.ndarray, inst_mask: np.ndarray, opaque_reject_alpha: float = _OPAQUE_REJECT_ALPHA):
+def _classify_instance(
+    img_np: np.ndarray,
+    inst_mask: np.ndarray,
+    opaque_reject_alpha: float = _OPAQUE_REJECT_ALPHA,
+    allow_colored_bg: bool = False,
+    max_instance_coverage: float = _MAX_INSTANCE_COVERAGE,
+):
     """Computes all false-positive-filter signals for one instance.
     Returns a dict with median_ink_alpha, bg_saturation, page_coverage,
     accepted (bool), and the background/mark_color already computed
@@ -495,6 +620,12 @@ def _classify_instance(img_np: np.ndarray, inst_mask: np.ndarray, opaque_reject_
     calibration) so every existing caller is unaffected; the direct-mask
     path passes _SEG_OPAQUE_REJECT_ALPHA instead -- see that constant's
     comment for why the two models need different cutoffs.
+
+    `max_instance_coverage`: the cutoff applied to page_coverage below.
+    Defaults to _MAX_INSTANCE_COVERAGE (the legacy MobileSAM-envelope
+    calibration) so every existing caller is unaffected; the direct-mask
+    path passes _SEG_MAX_INSTANCE_COVERAGE instead -- see that constant's
+    comment for why the two models need different caps.
 
     IMPORTANT split (Defect 1 fix): this function returns TWO different
     colors, and they must stay different.
@@ -517,18 +648,21 @@ def _classify_instance(img_np: np.ndarray, inst_mask: np.ndarray, opaque_reject_
     mask_bool = inst_mask > 0
     h, w = inst_mask.shape[:2]
     page_coverage = float(np.sum(mask_bool)) / float(h * w)
+    mask_pixels = int(np.sum(mask_bool))
+    page_coverage = float(mask_pixels) / float(h * w)
 
-    # Cheapest check first: an instance this large is a SAM-refinement
-    # failure (see _MAX_INSTANCE_COVERAGE), not a real watermark occurrence
-    # -- skip the alpha fit entirely rather than unmix across a fifth of
-    # the page with an admittedly-unreliable single flat background.
-    if page_coverage > _MAX_INSTANCE_COVERAGE:
+    if page_coverage >= max_instance_coverage:
         return {
-            "median_ink_alpha": 0.0, "bg_saturation": 0.0, "page_coverage": page_coverage,
+            "median_ink_alpha": 1.0,
+            "bg_saturation": 0.0,
+            "page_coverage": page_coverage,
             "accepted": False,
-            "reject_reason": f"mask too large ({page_coverage * 100:.1f}% of page >= {_MAX_INSTANCE_COVERAGE * 100:.0f}%, SAM likely failed to isolate a tight object)",
-            "background": None, "mark_color": None,
-            "removal_mark_color": None, "removal_color_fallback": False,
+            "reject_reason": f"excessive coverage ({page_coverage * 100:.1f}% >= {max_instance_coverage * 100:.1f}% of page)",
+            "background": None,
+            "mark_color": np.array([128, 128, 128], dtype=np.uint8),
+            "removal_mark_color": np.array([128, 128, 128], dtype=np.uint8),
+            "removal_color_fallback": True,
+            "removal_color_non_ink_pixels": 0,
         }
 
     bg_est = local_ring_background(img_np, inst_mask)
@@ -538,22 +672,12 @@ def _classify_instance(img_np: np.ndarray, inst_mask: np.ndarray, opaque_reject_
     residual = np.abs(gray_full - bg_gray)
 
     ink_bool = _ink_subset(residual, mask_bool)
-    # UNCHANGED filter path -- see this function's docstring for why the
-    # contaminated color must be kept exactly as it was for median_ink_alpha.
     mark_color = estimate_mark_color(img_np, inst_mask, residual)
     result = unmix_region(img_np, inst_mask, mark_color=mark_color, background=bg_est)
 
     alpha_ink = result.alpha[ink_bool]
     median_ink_alpha = float(np.median(alpha_ink)) if alpha_ink.size else 0.0
 
-    # Separate, corrected estimate for actual removal -- decoupled from the
-    # filter statistic above (see docstring). Mirrors doc_segment.py's
-    # per-pixel is_dark_ink exclusion (Otsu - 15) so it is computed on the
-    # SAME per-image Otsu threshold doc_segment will later use to carve
-    # dark ink out of every instance's mask before unmixing -- there is no
-    # separate "instance-level Otsu"; the threshold is a whole-page
-    # statistic recomputed here (cheaply, one image-wide cv2.threshold
-    # call) for every instance rather than threaded through as a parameter.
     otsu_val, _ = cv2.threshold(gray_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     is_dark_ink_bool = gray_full < (float(otsu_val) - 15.0)
     removal_mark_color, removal_color_fallback, non_ink_count = _estimate_removal_mark_color(
@@ -564,10 +688,10 @@ def _classify_instance(img_np: np.ndarray, inst_mask: np.ndarray, opaque_reject_
     bg_saturation = float(np.median(bg_hsv[:, :, 1][mask_bool])) if np.any(mask_bool) else 0.0
 
     reject_reason = None
-    if bg_saturation >= _CHROME_SATURATION_REJECT:
-        reject_reason = f"colored UI chrome (local background saturation {bg_saturation:.0f} >= {_CHROME_SATURATION_REJECT:.0f})"
-    elif median_ink_alpha >= opaque_reject_alpha:
+    if median_ink_alpha >= opaque_reject_alpha:
         reject_reason = f"opaque ink (median alpha {median_ink_alpha:.2f} >= {opaque_reject_alpha})"
+    elif bg_saturation >= _CHROME_SATURATION_REJECT and not allow_colored_bg:
+        reject_reason = f"colored UI chrome (local background saturation {bg_saturation:.0f} >= {_CHROME_SATURATION_REJECT:.0f})"
 
     return {
         "median_ink_alpha": median_ink_alpha,
@@ -585,7 +709,13 @@ def _classify_instance(img_np: np.ndarray, inst_mask: np.ndarray, opaque_reject_
 
 # --- public entry point ---------------------------------------------------
 
-def detect_watermark_masks(img_np: np.ndarray, conf: float = 0.15, model_choice: str = "Both (Union)", use_sam: bool = True):
+def detect_watermark_masks(
+    img_np: np.ndarray,
+    conf: float = 0.15,
+    model_choice: str = "Both (Union)",
+    use_sam: bool = True,
+    allow_colored_bg: bool = False,
+):
     """Detects watermark instances and refines them to tight masks.
 
     Returns (mask, meta):
@@ -605,22 +735,24 @@ def detect_watermark_masks(img_np: np.ndarray, conf: float = 0.15, model_choice:
     ``model_choice == "Finetuned (AriaTender)"`` routes to a completely
     different, simpler path: that model emits instance masks directly (see
     _detect_seg_masks), so _detect_boxes and _sam_refine are skipped
-    entirely -- there is no box stage and no separate refinement stage to
-    time, so ``refine_ms`` is always 0.0 and ``used_sam`` is always False
-    on this path. Everything downstream (the false-positive filter, the
-    accepted-mask union, the returned shape) is identical to the legacy
-    paths; only the opaque-ink cutoff passed into _classify_instance
-    differs (see _SEG_OPAQUE_REJECT_ALPHA).
+      meta -- dict with debug / status fields:
+                instances: list of per-candidate dicts
+                accepted_count, rejected_count: ints
+                coverage: float in [0, 1]
+                used_sam: bool
+                sam_error: str or None
+                detect_ms, refine_ms, total_ms: floats
     """
     t0 = time.time()
     h, w = img_np.shape[:2]
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    is_seg_path = model_choice == _SEG_MODEL_NAME
+    is_seg_path = is_direct_mask_model(model_choice)
     opaque_reject_alpha = _SEG_OPAQUE_REJECT_ALPHA if is_seg_path else _OPAQUE_REJECT_ALPHA
+    max_instance_coverage = _SEG_MAX_INSTANCE_COVERAGE if is_seg_path else _MAX_INSTANCE_COVERAGE
 
     if is_seg_path:
-        masks, boxes, scores, sources = _detect_seg_masks(img_np, conf, device)
+        masks, boxes, scores, sources = _detect_seg_masks(img_np, conf, device, model_choice)
         detect_ms = (time.time() - t0) * 1000
         used_sam = False
         sam_error = None
@@ -655,34 +787,63 @@ def detect_watermark_masks(img_np: np.ndarray, conf: float = 0.15, model_choice:
     # direct-mask branch -- nothing left to refine.
 
     instances = []
-    accepted_mask = np.zeros((h, w), dtype=np.uint8)
-    accepted_count = 0
-    rejected_count = 0
     for box, conf_i, src, inst_mask in zip(boxes, scores, sources, masks):
         if not np.any(inst_mask > 0):
-            rejected_count += 1
             instances.append({
                 "box": tuple(float(v) for v in box), "conf": float(conf_i), "source": src,
                 "mask": inst_mask, "accepted": False, "reject_reason": "empty mask",
-                "median_ink_alpha": 0.0,
+                "median_ink_alpha": 0.0, "bg_saturation": 0.0,
+                "page_coverage": 0.0, "background": None, "mark_color": None,
                 "removal_mark_color": None, "removal_color_fallback": False,
             })
             continue
 
-        cls = _classify_instance(img_np, inst_mask, opaque_reject_alpha=opaque_reject_alpha)
+        cls = _classify_instance(
+            img_np,
+            inst_mask,
+            opaque_reject_alpha=opaque_reject_alpha,
+            allow_colored_bg=allow_colored_bg,
+            max_instance_coverage=max_instance_coverage,
+        )
         instances.append({
             "box": tuple(float(v) for v in box), "conf": float(conf_i), "source": src,
             "mask": inst_mask, "accepted": cls["accepted"], "reject_reason": cls["reject_reason"],
             "median_ink_alpha": cls["median_ink_alpha"], "bg_saturation": cls["bg_saturation"],
             "page_coverage": cls["page_coverage"],
             "background": cls["background"], "mark_color": cls["mark_color"],
-            # Corrected removal color -- see _classify_instance's docstring
-            # for why this is a DIFFERENT value from "mark_color" above.
             "removal_mark_color": cls["removal_mark_color"],
             "removal_color_fallback": cls["removal_color_fallback"],
         })
-        if cls["accepted"]:
-            accepted_mask = np.maximum(accepted_mask, inst_mask)
+
+    # Cluster-aware relaxation (Fix 1): if allow_colored_bg is False, but >= 2
+    # instances (conf >= 0.40) were rejected ONLY due to colored UI chrome,
+    # they form a legitimate watermark cluster on a colored document banner
+    # (e.g. AriaTender on a hero header) rather than an isolated UI chrome false positive.
+    if not allow_colored_bg:
+        chrome_cluster = [
+            inst for inst in instances
+            if not inst["accepted"]
+            and inst["reject_reason"] is not None
+            and inst["reject_reason"].startswith("colored UI chrome")
+            and inst["conf"] >= 0.40
+        ]
+        if len(chrome_cluster) >= 2:
+            for inst in instances:
+                if (
+                    not inst["accepted"]
+                    and inst["reject_reason"] is not None
+                    and inst["reject_reason"].startswith("colored UI chrome")
+                ):
+                    inst["accepted"] = True
+                    inst["reject_reason"] = None
+                    inst["cluster_accepted"] = True
+
+    accepted_mask = np.zeros((h, w), dtype=np.uint8)
+    accepted_count = 0
+    rejected_count = 0
+    for inst in instances:
+        if inst["accepted"]:
+            accepted_mask = np.maximum(accepted_mask, inst["mask"])
             accepted_count += 1
         else:
             rejected_count += 1
