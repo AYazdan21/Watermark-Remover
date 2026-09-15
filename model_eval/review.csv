@@ -1,0 +1,220 @@
+image,model,verdict,categories,watermark_type,doc_type,note
+0_000bf78605,segmentations-freeze,good,,wide,standard_form,"whole mark, tight"
+0_000bf78605,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,whole mark; also 5 small blobs on the radio buttons above it
+0_000bf78605,detection-freeze,good,,wide,standard_form,shield + per-word boxes cover the whole mark
+0_02b607fa88,segmentations-freeze,good,,wide,standard_form,"whole mark, tight"
+0_02b607fa88,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,whole mark; also 4 small blobs on the radio buttons above it
+0_02b607fa88,detection-freeze,good,,wide,standard_form,shield + per-word boxes cover the whole mark
+0_0bac2afc07,segmentations-freeze,good,,wide,standard_form,"whole mark, tight"
+0_0bac2afc07,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,whole mark; also 5 small blobs on the radio buttons above it
+0_0bac2afc07,detection-freeze,good,,wide,standard_form,shield + per-word boxes cover the whole mark
+0_1883524d63,segmentations-freeze,good,,wide,standard_form,"whole mark, tight"
+0_1883524d63,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,whole mark; also 4 small blobs on the radio buttons above it
+0_1883524d63,detection-freeze,good,,wide,standard_form,shield + per-word boxes cover the whole mark
+0_192b4e909c,segmentations-freeze,good,,wide,standard_form,"whole mark, tight"
+0_192b4e909c,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,whole mark; also 4 small blobs on the radio buttons above it
+0_192b4e909c,detection-freeze,good,,wide,standard_form,shield + per-word boxes cover the whole mark
+0_23a4bae7d5,segmentations-freeze,minor,fp_color_banner_image,wide,web_card_colored,mark on blue banner found; thin FP line along the banner's white wave
+0_23a4bae7d5,segmentations-full,good,,wide,web_card_colored,mark on blue banner found
+0_23a4bae7d5,detection-freeze,minor,fp_text,wide,web_card_colored,mark covered; extra box on the MTPP-1288 reference text
+0_24cbbf8903,segmentations-freeze,good,,wide,standard_form,"whole mark, tight"
+0_24cbbf8903,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,whole mark; also 5 small blobs on the radio buttons above it
+0_24cbbf8903,detection-freeze,good,,wide,standard_form,shield + per-word boxes cover the whole mark
+0_2573513521,segmentations-freeze,bad,fp_graphic_icon;partial_coverage,wide,portal_long_page,large mask on the grey gavel 'preview unavailable' placeholder; parts of 'Aria'/'T' missed
+0_2573513521,segmentations-full,bad,fp_graphic_icon;partial_coverage,wide,portal_long_page,large mask on the gavel placeholder; 'Tend' letters missed
+0_2573513521,detection-freeze,bad,fp_graphic_icon;fp_table_lines_ui,wide,portal_long_page,mark covered; boxes on the gavel placeholder and the bottom 'back' button
+0_3104e71c19,segmentations-freeze,good,,wide,standard_form,"whole mark, tight"
+0_3104e71c19,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,whole mark; also 4 small blobs on the radio buttons above it
+0_3104e71c19,detection-freeze,good,,wide,standard_form,shield + per-word boxes cover the whole mark
+0_355a9bf621,segmentations-freeze,bad,fp_text,none,text_image_no_mark,no watermark on page (checked with contrast enhancement); ~58 masks over bold blue display text
+0_355a9bf621,segmentations-full,good,,none,text_image_no_mark,correctly empty
+0_355a9bf621,detection-freeze,minor,fp_text,none,text_image_no_mark,one 0.30 box on a bracket glyph
+0_363cf03d05,segmentations-freeze,good,,wide,standard_form,"whole mark, tight"
+0_363cf03d05,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,whole mark; also 4 small blobs on the radio buttons above it
+0_363cf03d05,detection-freeze,good,,wide,standard_form,shield + per-word boxes cover the whole mark
+0_3ba779527b,segmentations-freeze,good,,wide,standard_form,"whole mark, tight"
+0_3ba779527b,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,whole mark; also 4 small blobs on the radio buttons above it
+0_3ba779527b,detection-freeze,good,,wide,standard_form,shield + per-word boxes cover the whole mark
+0_3fafdb3957,segmentations-freeze,good,,wide,standard_form,"whole mark, tight"
+0_3fafdb3957,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,whole mark; also 4 small blobs on the radio buttons above it
+0_3fafdb3957,detection-freeze,good,,wide,standard_form,shield + per-word boxes cover the whole mark
+0_421284cfff,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_421284cfff,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_421284cfff,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_43c9f722e2,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_43c9f722e2,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_43c9f722e2,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_454be6f65a,segmentations-freeze,good,,wide,web_card,"whole mark, tight"
+0_454be6f65a,segmentations-full,good,,wide,web_card,whole mark; negligible specks on the grey box's rounded corners
+0_454be6f65a,detection-freeze,good,,wide,web_card,shield + per-word boxes cover the whole mark
+0_5058b6138d,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_5058b6138d,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_5058b6138d,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_552cff21fd,segmentations-freeze,bad,partial_coverage,stacked_large_faint,newspaper_notice,"huge faint stacked mark over text and a grey emblem: only a shield sliver, one letter and bits of the subtitle found"
+0_552cff21fd,segmentations-full,bad,missed_watermark,stacked_large_faint,newspaper_notice,only a shield sliver and one letter; wordmark and subtitle missed
+0_552cff21fd,detection-freeze,bad,box_too_large_or_merged;fp_text,stacked_large_faint,newspaper_notice,two huge boxes over body text / the bottom half; letters not found individually
+0_5e2a16c39b,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_5e2a16c39b,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_5e2a16c39b,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_63dcc4a1e3,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_63dcc4a1e3,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_63dcc4a1e3,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_659ce518ac,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_659ce518ac,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_659ce518ac,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_67f0d1eb00,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_67f0d1eb00,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_67f0d1eb00,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_69212ea400,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_69212ea400,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_69212ea400,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_693a13316c,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_693a13316c,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_693a13316c,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_6a08735940,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_6a08735940,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_6a08735940,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_71cfedcee6,segmentations-freeze,good,,wide,web_card,"whole mark, tight"
+0_71cfedcee6,segmentations-full,good,,wide,web_card,whole mark; negligible specks on the grey box's rounded corners
+0_71cfedcee6,detection-freeze,good,,wide,web_card,shield + per-word boxes cover the whole mark
+0_74286b3d33,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_74286b3d33,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_74286b3d33,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_7882b61e2c,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_7882b61e2c,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_7882b61e2c,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_7a547cc01e,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_7a547cc01e,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_7a547cc01e,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_867338eedb,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_867338eedb,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_867338eedb,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_876860feef,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_876860feef,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_876860feef,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_93a11281eb,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_93a11281eb,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_93a11281eb,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_9b3249c2b8,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_9b3249c2b8,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_9b3249c2b8,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_9f02983b8d,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_9f02983b8d,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_9f02983b8d,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_9f374fecce,segmentations-freeze,bad,fp_graphic_icon;fp_table_lines_ui,wide,portal_long_page,"mark covered; big mask on gavel placeholder, a strip down the left page margin, and the bottom button"
+0_9f374fecce,segmentations-full,bad,fp_graphic_icon;fp_table_lines_ui,wide,portal_long_page,mark covered; masks on gavel placeholder and bottom button
+0_9f374fecce,detection-freeze,bad,fp_graphic_icon,wide,portal_long_page,mark covered; box on gavel placeholder
+0_9f380d21d5,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_9f380d21d5,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_9f380d21d5,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a20f0fcd3f,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a20f0fcd3f,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a20f0fcd3f,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a376b5d68f,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a376b5d68f,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a376b5d68f,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a5b2ed4727,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a5b2ed4727,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a5b2ed4727,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a5fe2c63d7,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a5fe2c63d7,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a5fe2c63d7,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a63948e17f,segmentations-freeze,bad,fp_graphic_icon,wide,portal_long_page,mark covered; big mask on gavel placeholder
+0_a63948e17f,segmentations-full,bad,partial_coverage;fp_graphic_icon;fp_table_lines_ui,wide,portal_long_page,"only shield, 'A' and 'eT' found; masks on placeholder and bottom button"
+0_a63948e17f,detection-freeze,bad,fp_graphic_icon,wide,portal_long_page,mark covered; 3 boxes on gavel placeholder
+0_a6cf7f72c8,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a6cf7f72c8,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a6cf7f72c8,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a887bfdadb,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a887bfdadb,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_a887bfdadb,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_ab50b935d6,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_ab50b935d6,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_ab50b935d6,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_b2d7a9cb6d,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_b2d7a9cb6d,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_b2d7a9cb6d,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_c2f8c127b9,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_c2f8c127b9,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_c2f8c127b9,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_cc8bf23373,segmentations-freeze,bad,fp_graphic_icon,wide,portal_long_page,mark covered; big mask on gavel placeholder
+0_cc8bf23373,segmentations-full,bad,fp_graphic_icon,wide,portal_long_page,mark covered; big mask on gavel placeholder
+0_cc8bf23373,detection-freeze,bad,fp_graphic_icon,wide,portal_long_page,mark covered; box on gavel placeholder
+0_cf8939c6e4,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_cf8939c6e4,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_cf8939c6e4,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_d35830f41a,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_d35830f41a,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_d35830f41a,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_d4a8b722eb,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_d4a8b722eb,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_d4a8b722eb,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_d513362f80,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_d513362f80,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_d513362f80,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_dad9cf8e8a,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_dad9cf8e8a,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_dad9cf8e8a,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e2245d56f8,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e2245d56f8,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e2245d56f8,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e22a62e49c,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e22a62e49c,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e22a62e49c,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e246822b77,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e246822b77,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e246822b77,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e42bc467d6,segmentations-freeze,good,,wide,web_card,"whole mark, tight [assigned from identical-template metrics, not individually viewed]"
+0_e42bc467d6,segmentations-full,good,,wide,web_card,"whole mark; negligible specks on the grey box's rounded corners [assigned from identical-template metrics, not individually viewed]"
+0_e42bc467d6,detection-freeze,good,,wide,web_card,"shield + per-word boxes cover the whole mark [assigned from identical-template metrics, not individually viewed]"
+0_e436733f34,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e436733f34,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e436733f34,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e58075890c,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e58075890c,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e58075890c,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e631dc143d,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e631dc143d,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e631dc143d,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e6b580e44b,segmentations-freeze,bad,partial_coverage,stacked_large_faint,newspaper_notice,only the shield outline + a sliver at the right edge; 'AriaTende' letters and subtitle missed
+0_e6b580e44b,segmentations-full,bad,partial_coverage,stacked_large_faint,newspaper_notice,shield only; letters and subtitle missed
+0_e6b580e44b,detection-freeze,bad,partial_coverage;fp_logo_emblem,stacked_large_faint,newspaper_notice,shield boxes only; box on the SAIPAGAM logo top-right
+0_e9225ef657,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e9225ef657,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 3 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_e9225ef657,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_f57fd0e5d7,segmentations-freeze,good,,wide,portal_long_page,mark covered; placeholder correctly ignored
+0_f57fd0e5d7,segmentations-full,bad,partial_coverage;fp_graphic_icon,wide,portal_long_page,shield + a few letters only; mask on gavel placeholder
+0_f57fd0e5d7,detection-freeze,bad,fp_graphic_icon,wide,portal_long_page,mark covered; box on gavel placeholder
+0_f711f9d448,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_f711f9d448,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_f711f9d448,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_f872257aa5,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_f872257aa5,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_f872257aa5,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fa5f871138,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fa5f871138,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fa5f871138,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fad11fd1dd,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fad11fd1dd,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fad11fd1dd,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fbc79a7fb0,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fbc79a7fb0,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fbc79a7fb0,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fcf7aa3b06,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fcf7aa3b06,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 5 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fcf7aa3b06,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fd8cdb0fd4,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fd8cdb0fd4,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+0_fd8cdb0fd4,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+69_original,segmentations-freeze,good,,wide,standard_form,"whole mark, tight [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+69_original,segmentations-full,minor,fp_table_lines_ui,wide,standard_form,"whole mark; also 4 small blobs on the radio buttons above it [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+69_original,detection-freeze,good,,wide,standard_form,"shield + per-word boxes cover the whole mark [assigned from template metrics (seg IoU>=0.85, 3-5 small extra seg-full blobs, det covers >=90% of seg); not individually viewed]"
+70_original,segmentations-freeze,bad,partial_coverage,stacked_large_faint,notice_colored_frame,shield + a few letter fragments; most letters and the subtitle missed
+70_original,segmentations-full,minor,partial_coverage;fp_text,stacked_large_faint,notice_colored_frame,huge faint wordmark traced well (conf 0.93); FP on the red headline word; faint subtitle missed
+70_original,detection-freeze,bad,box_too_large_or_merged;partial_coverage,stacked_large_faint,notice_colored_frame,"few coarse boxes, one spanning a whole text block; most letters not boxed"
+75_original,segmentations-freeze,minor,ood_watermark;partial_coverage,ood_confidential_tiled,excel_screenshot,~2/3 of the tiled CONFIDENTIAL repeats found; misses repeats over the dense left columns
+75_original,segmentations-full,minor,ood_watermark;fp_table_lines_ui,ood_confidential_tiled,excel_screenshot,"most repeats found, including over text; small FPs on title-bar icons"
+75_original,detection-freeze,minor,ood_watermark;partial_coverage;fp_table_lines_ui,ood_confidential_tiled,excel_screenshot,"loose boxes on most repeats, several missed; box on the window close button"
+82_original,segmentations-freeze,minor,mask_bleed,stacked_large_faint,notice_bordered,"cropped huge mark: shield + 'Aria' all found, but masks are coarse blobs that also cover text between strokes and the TCI logo"
+82_original,segmentations-full,bad,partial_coverage,stacked_large_faint,notice_bordered,shield only; 'Aria' letters missed
+82_original,detection-freeze,bad,box_too_large_or_merged;partial_coverage,stacked_large_faint,notice_bordered,one box spans shield + TCI logo + text; letters only partly boxed

@@ -1,0 +1,9 @@
+image,model,flags
+0_23a4bae7d5,segmentations-freeze,high_dark_ink
+0_23a4bae7d5,segmentations-full,high_dark_ink
+0_23a4bae7d5,detection-freeze,high_dark_ink
+0_355a9bf621,segmentations-freeze,high_dark_ink;seg_models_disagree;det_seg_disagree
+0_355a9bf621,segmentations-full,no_detections;seg_models_disagree
+0_552cff21fd,segmentations-freeze,seg_models_disagree
+0_552cff21fd,segmentations-full,seg_models_disagree
+82_original,detection-freeze,high_coverage

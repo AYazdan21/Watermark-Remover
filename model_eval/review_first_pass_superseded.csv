@@ -1,0 +1,220 @@
+image,model,verdict,categories,watermark_type,note
+0_000bf78605,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_000bf78605,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_000bf78605,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_02b607fa88,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_02b607fa88,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_02b607fa88,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_0bac2afc07,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_0bac2afc07,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_0bac2afc07,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_1883524d63,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_1883524d63,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_1883524d63,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_192b4e909c,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_192b4e909c,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_192b4e909c,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_24cbbf8903,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_24cbbf8903,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_24cbbf8903,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_3104e71c19,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_3104e71c19,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_3104e71c19,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_363cf03d05,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_363cf03d05,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_363cf03d05,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_3ba779527b,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_3ba779527b,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_3ba779527b,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_3fafdb3957,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_3fafdb3957,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_3fafdb3957,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_421284cfff,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_421284cfff,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_421284cfff,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_43c9f722e2,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_43c9f722e2,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_43c9f722e2,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_454be6f65a,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_454be6f65a,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_454be6f65a,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_5058b6138d,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_5058b6138d,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_5058b6138d,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_5e2a16c39b,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_5e2a16c39b,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_5e2a16c39b,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_63dcc4a1e3,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_63dcc4a1e3,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_63dcc4a1e3,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_659ce518ac,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_659ce518ac,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_659ce518ac,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_67f0d1eb00,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_67f0d1eb00,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_67f0d1eb00,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_69212ea400,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_69212ea400,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_69212ea400,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_693a13316c,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_693a13316c,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_693a13316c,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_6a08735940,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_6a08735940,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_6a08735940,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_74286b3d33,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_74286b3d33,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_74286b3d33,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_7882b61e2c,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_7882b61e2c,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_7882b61e2c,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_7a547cc01e,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_7a547cc01e,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_7a547cc01e,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_867338eedb,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_867338eedb,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_867338eedb,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_876860feef,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_876860feef,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_876860feef,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_93a11281eb,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_93a11281eb,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_93a11281eb,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_9b3249c2b8,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_9b3249c2b8,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_9b3249c2b8,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_9f374fecce,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_9f374fecce,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_9f374fecce,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_9f380d21d5,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_9f380d21d5,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_9f380d21d5,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_a20f0fcd3f,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_a20f0fcd3f,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_a20f0fcd3f,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_a376b5d68f,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_a376b5d68f,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_a376b5d68f,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_a5b2ed4727,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_a5b2ed4727,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_a5b2ed4727,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_a5fe2c63d7,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_a5fe2c63d7,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_a5fe2c63d7,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_a63948e17f,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_a63948e17f,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_a63948e17f,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_a887bfdadb,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_a887bfdadb,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_a887bfdadb,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_ab50b935d6,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_ab50b935d6,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_ab50b935d6,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_b2d7a9cb6d,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_b2d7a9cb6d,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_b2d7a9cb6d,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_c2f8c127b9,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_c2f8c127b9,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_c2f8c127b9,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_cc8bf23373,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_cc8bf23373,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_cc8bf23373,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_cf8939c6e4,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_cf8939c6e4,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_cf8939c6e4,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_d35830f41a,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_d35830f41a,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_d35830f41a,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_d4a8b722eb,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_d4a8b722eb,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_d4a8b722eb,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_d513362f80,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_d513362f80,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_d513362f80,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_dad9cf8e8a,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_dad9cf8e8a,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_dad9cf8e8a,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_e2245d56f8,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_e2245d56f8,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_e2245d56f8,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_e22a62e49c,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_e22a62e49c,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_e22a62e49c,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_e246822b77,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_e246822b77,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_e246822b77,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_e42bc467d6,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_e42bc467d6,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_e42bc467d6,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_e436733f34,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_e436733f34,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_e436733f34,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_e58075890c,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_e58075890c,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_e58075890c,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_e631dc143d,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_e631dc143d,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_e631dc143d,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_e9225ef657,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_e9225ef657,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_e9225ef657,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_f57fd0e5d7,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_f57fd0e5d7,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_f57fd0e5d7,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_f711f9d448,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_f711f9d448,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_f711f9d448,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_f872257aa5,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_f872257aa5,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_f872257aa5,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_fa5f871138,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_fa5f871138,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_fa5f871138,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_fad11fd1dd,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_fad11fd1dd,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_fad11fd1dd,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_fbc79a7fb0,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_fbc79a7fb0,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_fbc79a7fb0,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_fcf7aa3b06,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_fcf7aa3b06,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_fcf7aa3b06,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_fd8cdb0fd4,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+0_fd8cdb0fd4,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+0_fd8cdb0fd4,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+69_original,segmentations-freeze,good,,wide,"catches full pink shield + AriaTender.net text at high conf, tight mask"
+69_original,segmentations-full,good,,wide,catches full mark at high conf; mask occasionally a few px wider than freeze's
+69_original,detection-freeze,minor,fragmented,wide,correct location but splits the wordmark into many per-word/per-letter boxes; one box around the shield naturally includes some background padding
+0_2573513521,segmentations-freeze,good,,stacked,"small corner badge caught, jagged but centred outline"
+0_2573513521,segmentations-full,good,,stacked,"small corner badge caught, tighter outline than freeze"
+0_2573513521,detection-freeze,bad,missed_watermark,stacked,no box anywhere near the corner badge; only a stray low-conf box near the bottom margin unrelated to the mark
+0_71cfedcee6,segmentations-freeze,good,,stacked,"small corner badge caught, jagged but centred outline"
+0_71cfedcee6,segmentations-full,good,,stacked,"small corner badge caught, tighter outline than freeze"
+0_71cfedcee6,detection-freeze,good,,stacked,single box over the corner badge
+0_9f02983b8d,segmentations-freeze,good,,stacked,"small corner badge caught, jagged but centred outline"
+0_9f02983b8d,segmentations-full,good,,stacked,"small corner badge caught, tighter outline than freeze"
+0_9f02983b8d,detection-freeze,good,,stacked,single box over the corner badge
+0_a6cf7f72c8,segmentations-freeze,good,,stacked,"small corner badge caught, jagged but centred outline"
+0_a6cf7f72c8,segmentations-full,good,,stacked,"small corner badge caught, tighter outline than freeze"
+0_a6cf7f72c8,detection-freeze,good,,stacked,single box over the corner badge
+0_355a9bf621,segmentations-freeze,bad,fp_text,none,no watermark on page; fires with many high-conf fragments across essentially every line of the bold blue body text
+0_355a9bf621,segmentations-full,good,,none,correctly produces zero detections on this negative page
+0_355a9bf621,detection-freeze,minor,fp_text,none,a few boxes on body-text words but all below conf 0.25 (low_conf band only); would produce no output at the default threshold
+0_552cff21fd,segmentations-freeze,minor,partial_coverage;fp_color_banner_image,wide,"finds the pink shield outline well (conf ~0.9) but the gray AriaTender.net text, which sits directly over the org's blue star seal graphic, is not recovered; a few fragments land on the star pattern itself rather than the wordmark"
+0_552cff21fd,segmentations-full,bad,partial_coverage,wide,"only a small low-conf sliver of the shield is found (conf ~0.35); most of the mark, including the whole wordmark, is missed"
+0_552cff21fd,detection-freeze,bad,partial_coverage;low_conf_only;box_too_large_or_merged,wide,"boxes are large, low confidence (0.13-0.30, one at 0.57 spanning unrelated text lines above) and do not tightly localize the mark over the star-pattern background"
+0_e6b580e44b,segmentations-freeze,bad,missed_watermark;partial_coverage,wide,"only the small top-left instance is (partially, low-conf) found; the large diagonal AriaTender.net instance across the lower-right of the poster is not detected at all"
+0_e6b580e44b,segmentations-full,bad,missed_watermark;partial_coverage,wide,same as freeze but weaker still (top-left instance only at conf 0.64); large diagonal instance entirely missed
+0_e6b580e44b,detection-freeze,bad,missed_watermark;fp_logo_emblem,wide,"high-conf box (0.59) lands on the real SAIPAGAM organisation logo top-right, a false positive on a real emblem; the large diagonal AriaTender instance is completely missed"
+70_original,segmentations-freeze,bad,fp_text,wide,high-conf letter-shaped fragments scattered across the real headline and first paragraph where no mark is visible; the tiny real corner mark (bottom-left) is not clearly separated from this noise
+70_original,segmentations-full,bad,fp_text,wide,"draws a full AriaTender-shaped silhouette directly over the real red headline text at conf up to 0.93 -- looks like a template/position prior firing rather than a pixel-evidenced detection, since no mark is visible there in the original"
+70_original,detection-freeze,bad,fp_text,wide,"high-conf boxes (0.75, 0.32) cover the real headline and body-text lines with no visible mark underneath"
+75_original,segmentations-freeze,good,ood_watermark,other,"OOD mark (tiled 'CONFIDENTIAL', not AriaTender). Most of the diagonal repeats across the sheet are found at moderate-high conf, each split into several fragments; no notable FP on the grid/data"
+75_original,segmentations-full,good,ood_watermark,other,"OOD mark found similarly to freeze, slightly more complete coverage of the repeats"
+75_original,detection-freeze,minor,ood_watermark;partial_coverage,other,"OOD mark partially found: boxes on roughly half of the tiled 'CONFIDENTIAL' repeats, several repeats (e.g. mid-sheet) left unboxed"
+82_original,segmentations-freeze,bad,ood_watermark;fp_text,other,"OOD mark (thin ring/shield logo tiled faintly over the table/body text) is not cleanly localized; instead large high/med-conf blobs cover most of the real Persian body text and headline, tracking paragraph shapes rather than the faint ring tiling"
+82_original,segmentations-full,bad,ood_watermark;fp_text,other,same failure mode as freeze: broad coverage of real body text rather than the faint ring pattern
+82_original,detection-freeze,bad,ood_watermark;fp_text;box_too_large_or_merged,other,large high-conf boxes (up to 0.80) over the header and a body paragraph; not a precise localization of the faint ring watermark
+0_23a4bae7d5,segmentations-freeze,minor,partial_coverage;mask_bleed,wide,pink shield found at high conf (0.9+) against the dark blue banner; the gray AriaTender.net text is barely recovered (low contrast against dark blue); thin spurious diagonal line fragments extend away from the shield
+0_23a4bae7d5,segmentations-full,minor,partial_coverage,wide,"similar to freeze: shield found well, gray wordmark text mostly missed against the dark banner"
+0_23a4bae7d5,detection-freeze,minor,partial_coverage;fp_text,wide,high-conf box on the shield only; several low-conf (<0.25) boxes scattered across banner body text (would not fire at the default threshold)
