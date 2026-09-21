@@ -78,13 +78,22 @@ for the physics).
   (``weights/alpha_net_best_final.pt``, or the older name
   ``weights/alpha_net_best.pt``); without one this strategy degrades
   gracefully (page returned unchanged, with an explanatory message -- see
-  ``clean_document_detect``) rather than crashing. Honest limits: quality
-  depends on how well the network's synthetic training (the Kaggle
-  ``wm_dataset_out`` generator, replayed for exact targets) transfers to
-  real scanned pages -- its validation numbers are on synthetic crops only;
-  and, like the other two
-  strategies, only pixels inside a detected box's won region are ever
-  touched -- a mark the detector misses is untouched here too.
+  ``clean_document_detect``) rather than crashing. Ink guard (``ALPHA_NET_
+  INK_GUARD``, default on): like Bounded Subtractive, this strategy never
+  writes ``recover``'s output into a won pixel classified as real ink --
+  see the "Protect ink in Alpha Network" comment below for the measurement
+  that motivated this (dark text pixels inside a box losing most of their
+  contrast even though the network was never asked to touch text). Honest
+  limits: quality depends on how well the network's synthetic training (the
+  Kaggle ``wm_dataset_out`` generator, replayed for exact targets)
+  transfers to real scanned pages -- its validation numbers are on
+  synthetic crops only; measured on the repo's real ``wm_testset`` pages,
+  the checkpoint under-predicts alpha (recovers only ~60-65% of the mark
+  even on its own synthetic distribution) and is sensitive to page
+  scale/sharpness; and, like the other two strategies, only pixels inside a
+  detected box's won region are ever touched -- a mark the detector misses
+  is untouched here too. See ``scripts/alpha_net/benchmark.py`` for a
+  repeatable measurement of all of this.
 
 HARD INVARIANT: every pixel outside the union of the (padded) detection
 boxes is byte-identical to the input. Zero detections returns an unmodified
@@ -101,7 +110,7 @@ import cv2
 import numpy as np
 import torch
 
-from . import alpha_net, detector
+from . import alpha_net, detector, stamp_fit
 from .config import BASE_DIR
 from .container_cleaner import fill_masked_area_rgb
 from .doc_core import _remove_flat_fill
@@ -115,11 +124,27 @@ from .doc_segment import (
 STRATEGY_THRESHOLD_FILL = "Threshold + Flat Fill (per box)"
 STRATEGY_BOUNDED_SUBTRACTIVE = "Bounded Subtractive (per box)"
 STRATEGY_ALPHA_NET = "Alpha Network (per box)"
+STRATEGY_STAMP_FIT = "Stamp Fit + Exact Removal (AriaTender)"
 
 # New deblending strategies get appended here and dispatched with a new
 # ``elif removal_strategy == STRATEGY_...:`` branch in apply_box_strategy
 # below -- see the module docstring.
-STRATEGY_CHOICES = [STRATEGY_THRESHOLD_FILL, STRATEGY_BOUNDED_SUBTRACTIVE, STRATEGY_ALPHA_NET]
+STRATEGY_CHOICES = [STRATEGY_THRESHOLD_FILL, STRATEGY_BOUNDED_SUBTRACTIVE, STRATEGY_ALPHA_NET, STRATEGY_STAMP_FIT]
+
+# Alpha Network (per box) only: when True (the default), never write the
+# network's `recover`-d pixel into a won pixel classified as real ink (same
+# per-box polarity/ink logic Bounded Subtractive already uses -- see
+# apply_box_strategy's STRATEGY_ALPHA_NET branch). Measured motivation: on
+# wm_testset/images/0_552cff21fd.jpg, without this guard only ~52-60% of
+# dark text pixels inside the detected boxes stayed within 10 grey levels of
+# their original value after alpha-net removal -- the network was never
+# asked to leave real content alone, only to invert a modelled watermark
+# blend, and on real ink it sometimes predicts non-trivial alpha too. A
+# module-level switch (rather than a parameter threaded through
+# clean_document_detect/debug_detect_boxes) is what lets
+# scripts/alpha_net/benchmark.py's --no-ink-guard flag A/B this without a
+# UI or call-signature change.
+ALPHA_NET_INK_GUARD = True
 
 # Trained alpha-regression checkpoint (watermark_remover/alpha_net.py,
 # train_watermark_seg_kaggle.ipynb section 10). The notebook's final-download
@@ -127,11 +152,38 @@ STRATEGY_CHOICES = [STRATEGY_THRESHOLD_FILL, STRATEGY_BOUNDED_SUBTRACTIVE, STRAT
 # still accepted. If neither exists, STRATEGY_ALPHA_NET degrades gracefully
 # (unchanged page + explanatory message, see clean_document_detect /
 # debug_detect_boxes) rather than crashing.
+# First existing file wins. alpha_net_v4_realft.pt (v3 fine-tuned on real
+# pages with Stamp Fit targets, scripts/alpha_net/finetune_real.py) is the best
+# checkpoint on real pages so far -- on wm_realtune: leftover mark 12.9 vs 15.2
+# (v2) / 16.7 (v3 as first shipped), false opacity off the mark 2.5% vs ~5%;
+# improved on both held-out pages. The older checkpoints remain as fallbacks.
 _ALPHA_NET_CANDIDATES = [
+    os.path.join(BASE_DIR, "weights", "alpha_net_v4_realft.pt"),
     os.path.join(BASE_DIR, "weights", "alpha_net_best_final.pt"),
     os.path.join(BASE_DIR, "weights", "alpha_net_best.pt"),
 ]
 ALPHA_NET_WEIGHTS = next((p for p in _ALPHA_NET_CANDIDATES if os.path.exists(p)), _ALPHA_NET_CANDIDATES[0])
+
+# Stamp Fit uses an alpha network only to LOCATE stamps (its opacity map is
+# the signal the artwork is matched against). v4 is preferred (see above),
+# then v2 (96-101% of ground-truth opacity on synthetic data vs v1's 63-79%);
+# only after that the older app checkpoints.
+_STAMP_FIT_LOCATOR_CANDIDATES = [
+    os.path.join(BASE_DIR, "weights", "alpha_net_v4_realft.pt"),
+    os.path.join(BASE_DIR, "weights", "alpha_net_v2_best_final.pt"),
+] + _ALPHA_NET_CANDIDATES[1:]
+
+
+def stamp_fit_locator_weights():
+    return next((p for p in _STAMP_FIT_LOCATOR_CANDIDATES if os.path.exists(p)), None)
+
+
+def stamp_fit_weights_missing_message() -> str:
+    return (
+        "Stamp Fit needs an alpha-network checkpoint to locate stamps; none found at "
+        + ", ".join(_STAMP_FIT_LOCATOR_CANDIDATES)
+        + ". Train one with train_watermark_seg_kaggle.ipynb and place it in weights/."
+    )
 
 _alpha_net_models = {}
 
@@ -286,8 +338,15 @@ def apply_box_strategy(
           ink" comment below)}
         Alpha Network: {"alpha_mean": float, "alpha_max": float,
           "alpha_px": int (won pixels with predicted alpha > 0.02),
-          "changed_px": int} -- no bg_median/bg_gray_* here, since this
-          strategy never estimates a background colour at all (see the
+          "changed_px": int, "polarity": "dark"/"bright" (same bright/dark
+          decision Bounded Subtractive makes, from the background map --
+          used only to pick the ink test below, since this strategy has no
+          background-directed correction of its own), "ink_px_kept": int
+          (won pixels classified as real ink and therefore left
+          byte-identical when ALPHA_NET_INK_GUARD is True -- see the
+          "Protect ink in Alpha Network" comment below; 0 when the guard is
+          off)} -- no bg_median/bg_gray_* here, since this strategy never
+          estimates a background colour for its OWN removal math (see the
           module docstring); page_info gains "alpha_net_weights" (the
           checkpoint path) and "alpha_net_infer_ms" (one predict_image call
           over the union-of-boxes crop, shared by every box).
@@ -304,6 +363,9 @@ def apply_box_strategy(
             f"Unknown Method 4 removal strategy {removal_strategy!r}. "
             f"Valid choices: {STRATEGY_CHOICES}."
         )
+
+    if removal_strategy == STRATEGY_STAMP_FIT:
+        return _apply_stamp_fit(img_np, instances, thresh_offset, anti_alias, stamp_filter)
 
     h, w = img_np.shape[:2]
     cleaned = img_np.copy()
@@ -520,9 +582,38 @@ def apply_box_strategy(
             rec_box = alpha_net_recovered_full[ly1:ly2, lx1:lx2]
             alpha_box = alpha_net_alpha_full[ly1:ly2, lx1:lx2]
 
+            # Protect ink in Alpha Network: same per-box polarity/ink test
+            # Bounded Subtractive already uses (bright-mark-on-dark-banner
+            # vs. dark-mark-on-light-page, from the background map's own
+            # luminance -- see that branch above for the identical
+            # computation). Measured motivation: on
+            # wm_testset/images/0_552cff21fd.jpg, writing the network's
+            # `recover`-d pixel into every won pixel (no ink guard) left
+            # only ~52-60% of dark text pixels inside the boxes within 10
+            # grey levels of their original value -- the network inverts a
+            # modelled watermark blend wherever it predicts nonzero alpha,
+            # and on real ink strokes it sometimes does, damaging content
+            # the other two strategies' own ink guards already protect.
+            # ALPHA_NET_INK_GUARD (module-level, see its own docstring)
+            # lets scripts/alpha_net/benchmark.py's --no-ink-guard flag
+            # reproduce the unguarded behaviour for comparison.
+            gray_crop = gray_full[y1:y2, x1:x2]
+            bg_lum_crop = bg_crop.astype(np.float64) @ _LUMA_WEIGHTS
+            won_bg_lum = bg_lum_crop[won]
+            is_bright_mark = bool(np.median(won_bg_lum) < 140.0) if won_bg_lum.size else False
+            if is_bright_mark:
+                is_ink = gray_crop.astype(np.float64) > (bg_lum_crop + 40.0)
+            else:
+                is_ink = gray_crop.astype(np.float64) < (gray_otsu - 15.0)
+
+            if ALPHA_NET_INK_GUARD:
+                write_mask = won & (~is_ink)
+            else:
+                write_mask = won
+
             box_cleaned = orig_crop.copy()
-            box_cleaned[won] = rec_box[won]
-            cleaned[y1:y2, x1:x2][won] = box_cleaned[won]
+            box_cleaned[write_mask] = rec_box[write_mask]
+            cleaned[y1:y2, x1:x2][write_mask] = box_cleaned[write_mask]
 
             won_alpha = alpha_box[won]
             changed_px = int(np.sum(np.any(box_cleaned[won] != orig_crop[won], axis=-1)))
@@ -531,10 +622,104 @@ def apply_box_strategy(
                 "alpha_max": float(won_alpha.max()) if won_alpha.size else 0.0,
                 "alpha_px": int(np.sum(won_alpha > 0.02)),
                 "changed_px": changed_px,
+                "polarity": "bright" if is_bright_mark else "dark",
+                "ink_px_kept": int(np.sum(won & is_ink)) if ALPHA_NET_INK_GUARD else 0,
             })
 
         handled[y1:y2, x1:x2] = True
 
+    return cleaned, page_info, per_box_info
+
+
+# Stamp Fit: a detection box counts as handled by the fitted stamps when at
+# least this fraction of it lies inside a stamp's (slightly dilated)
+# footprint; any box below that goes to the Alpha Network fallback.
+_STAMP_BOX_COVERED_FRAC = 0.3
+
+
+def _apply_stamp_fit(img_np, instances, thresh_offset, anti_alias, stamp_filter):
+    """STRATEGY_STAMP_FIT (see stamp_fit.py for the method and its limits):
+    locate the known AriaTender stamps over the WHOLE page -- not just inside
+    detection boxes, so a mark the detector missed is still removed -- remove
+    them exactly. On a page where NO stamp was accepted (its watermark is not
+    AriaTender, e.g. an Excel "CONFIDENTIAL" background), every detection box
+    goes to STRATEGY_ALPHA_NET instead (when its weights exist). On a page
+    where a stamp WAS accepted, detection boxes it doesn't cover are left
+    alone: there they are far more likely to be detector false positives
+    than a second, different watermark -- measured on wm_realtune/
+    0_552cff21fd, the fallback on two such boxes (the page's blue star
+    ornament and body text) changed ~108k px of real content. Honest limit:
+    a page carrying BOTH an AriaTender stamp and a different watermark keeps
+    the other one.
+
+    Invariant (replaces the module's box invariant for this strategy): every
+    changed pixel lies inside an accepted stamp's own footprint or inside a
+    fallback box; everything else is byte-identical.
+
+    Returns (cleaned, page_info, per_box_info) like apply_box_strategy.
+    page_info["stamp_fit"] holds the fitted marks, rejected fits, timings and
+    the fallback count; page_info["stamp_alpha"] is the fitted opacity map
+    (for the debugger's overlay). per_box_info rows: {"covered_by_stamp",
+    "stamp_cover_frac", "fallback", "changed_px"}.
+    """
+    weights = stamp_fit_locator_weights()
+    if weights is None:
+        raise FileNotFoundError(stamp_fit_weights_missing_message())
+
+    t0 = time.time()
+    locator = get_alpha_net_model(weights)
+    alpha_map, _ink, _rec = alpha_net.predict_image(locator, img_np)
+    infer_ms = (time.time() - t0) * 1000
+
+    t1 = time.time()
+    accepted, rejected = stamp_fit.locate_stamps(img_np, alpha_map)
+    locate_ms = (time.time() - t1) * 1000
+
+    t2 = time.time()
+    cleaned, stamp_alpha, marks_info = stamp_fit.remove_stamps(img_np, accepted)
+    remove_ms = (time.time() - t2) * 1000
+
+    covered = cv2.dilate((stamp_alpha > 1e-4).astype(np.uint8), np.ones((13, 13), np.uint8)) > 0
+    fallback_idx, per_box_info = [], []
+    for i, inst in enumerate(instances):
+        x1, y1, x2, y2 = inst["box"]
+        frac = float(covered[y1:y2, x1:x2].mean()) if (x2 > x1 and y2 > y1) else 0.0
+        is_covered = frac >= _STAMP_BOX_COVERED_FRAC
+        if not is_covered:
+            fallback_idx.append(i)
+        per_box_info.append({"covered_by_stamp": is_covered, "stamp_cover_frac": round(frac, 3),
+                             "fallback": False, "changed_px": 0})
+
+    fallback_strategy = None
+    if not accepted and fallback_idx and os.path.exists(ALPHA_NET_WEIGHTS):
+        fallback_strategy = STRATEGY_ALPHA_NET
+        rest = [instances[i] for i in fallback_idx]
+        cleaned, _fb_page, _fb_boxes = apply_box_strategy(
+            cleaned, rest, STRATEGY_ALPHA_NET, thresh_offset=thresh_offset,
+            anti_alias=anti_alias, stamp_filter=stamp_filter,
+        )
+        for i in fallback_idx:
+            per_box_info[i]["fallback"] = True
+
+    changed = np.any(cleaned != img_np, axis=2)
+    for inst, pbi in zip(instances, per_box_info):
+        x1, y1, x2, y2 = inst["box"]
+        pbi["changed_px"] = int(changed[y1:y2, x1:x2].sum())
+
+    page_info = {
+        "stamp_fit": {
+            "marks": marks_info,
+            "rejected": [{k: v for k, v in r.items() if k != "parts"} for r in rejected],
+            "locator_weights": weights,
+            "infer_ms": infer_ms,
+            "locate_ms": locate_ms,
+            "remove_ms": remove_ms,
+            "fallback_boxes": len(fallback_idx),
+            "fallback_strategy": fallback_strategy,
+            "changed_px_total": int(changed.sum()),
+        },
+        "stamp_alpha": stamp_alpha,
+    }
     return cleaned, page_info, per_box_info
 
 
@@ -570,8 +755,13 @@ def clean_document_detect(
             f"Valid choices: {STRATEGY_CHOICES}."
         )
 
+    missing = None
     if removal_strategy == STRATEGY_ALPHA_NET and not os.path.exists(ALPHA_NET_WEIGHTS):
-        message = f"Method 4 (detection-driven): {alpha_net_weights_missing_message(ALPHA_NET_WEIGHTS)}"
+        missing = alpha_net_weights_missing_message(ALPHA_NET_WEIGHTS)
+    elif removal_strategy == STRATEGY_STAMP_FIT and stamp_fit_locator_weights() is None:
+        missing = stamp_fit_weights_missing_message()
+    if missing is not None:
+        message = f"Method 4 (detection-driven): {missing}"
         status = {
             "instances_found": 0,
             "coverage": 0.0,
@@ -613,7 +803,29 @@ def clean_document_detect(
     coverage_pct = meta["coverage"] * 100
     changed_px = sum(pb.get("changed_px", 0) for pb in per_box_info)
 
-    if n_found == 0:
+    if removal_strategy == STRATEGY_STAMP_FIT:
+        sf = page_info["stamp_fit"]
+        changed_px = sf["changed_px_total"]
+        kinds = ", ".join(m["kind"] for m in sf["marks"]) or "none"
+        if sf["fallback_strategy"]:
+            fb = (f" {sf['fallback_boxes']} detection box(es) not covered by a stamp were handled by "
+                  f"{sf['fallback_strategy']}.")
+        elif sf["fallback_boxes"] and sf["marks"]:
+            fb = (f" {sf['fallback_boxes']} detection box(es) not covered by a stamp were left unchanged "
+                  f"(a stamp was confirmed on this page, so they are treated as detector false positives).")
+        elif sf["fallback_boxes"]:
+            fb = (f" {sf['fallback_boxes']} detection box(es) were left unchanged "
+                  f"(no Alpha Network weights for the fallback).")
+        else:
+            fb = ""
+        message = (
+            f"Method 4 (detection-driven): {STRATEGY_STAMP_FIT}: {len(sf['marks'])} AriaTender stamp(s) "
+            f"located and removed exactly ({kinds}); {len(sf['rejected'])} candidate fit(s) rejected by "
+            f"the page-evidence check. {n_found} detection box(es) at conf >= {conf}.{fb} "
+            f"Changed {changed_px} px in {total_ms:.1f} ms (network {sf['infer_ms']:.0f} ms, locate "
+            f"{sf['locate_ms']:.0f} ms, remove {sf['remove_ms']:.0f} ms)."
+        )
+    elif n_found == 0:
         message = (
             f"Method 4 (detection-driven): no boxes detected by {meta['model']} "
             f"at conf >= {conf} (padding {box_padding} px) -- nothing was removed. "

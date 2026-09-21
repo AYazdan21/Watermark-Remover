@@ -222,6 +222,8 @@ def debug_detect_boxes(
         # returning the input unchanged rather than None so there is still
         # something to look at.
         return doc_image, doc_detect.alpha_net_weights_missing_message(doc_detect.ALPHA_NET_WEIGHTS)
+    if removal_strategy == doc_detect.STRATEGY_STAMP_FIT and doc_detect.stamp_fit_locator_weights() is None:
+        return doc_image, doc_detect.stamp_fit_weights_missing_message()
 
     img_np = np.array(doc_image.convert("RGB"))
 
@@ -239,7 +241,8 @@ def debug_detect_boxes(
         background=background,
     )
 
-    overlay = _render_detect_overlay(img_np, cleaned, instances, box_padding=int(box_padding))
+    overlay = _render_detect_overlay(img_np, cleaned, instances, box_padding=int(box_padding),
+                                     stamp_alpha=page_info.get("stamp_alpha"))
     report = _render_detect_report(
         img_np, instances, meta, conf, model_choice, page_info, per_box_info,
         removal_strategy, anti_alias, box_padding=int(box_padding),
@@ -248,7 +251,8 @@ def debug_detect_boxes(
     return Image.fromarray(overlay), report
 
 
-def _render_detect_overlay(img_np: np.ndarray, cleaned: np.ndarray, instances: list, box_padding: int = 0) -> np.ndarray:
+def _render_detect_overlay(img_np: np.ndarray, cleaned: np.ndarray, instances: list, box_padding: int = 0,
+                           stamp_alpha: np.ndarray = None) -> np.ndarray:
     overlay = img_np.astype(np.float64).copy()
     h, w = img_np.shape[:2]
 
@@ -263,6 +267,13 @@ def _render_detect_overlay(img_np: np.ndarray, cleaned: np.ndarray, instances: l
         overlay[changed] = (1 - _M4_TINT_STRENGTH) * overlay[changed] + _M4_TINT_STRENGTH * tint
 
     overlay = np.clip(overlay, 0, 255).astype(np.uint8)
+
+    # Stamp Fit only: outline of every accepted stamp's fitted footprint, so
+    # the fit itself (not just the pixels it changed) can be checked by eye.
+    if stamp_alpha is not None and np.any(stamp_alpha > 1e-4):
+        foot = (stamp_alpha > 0.02).astype(np.uint8)
+        edge = cv2.morphologyEx(foot, cv2.MORPH_GRADIENT, np.ones((2, 2), np.uint8)) > 0
+        overlay[edge] = _M4_STAMP_OUTLINE_COLOR
 
     for i, inst in enumerate(instances, 1):
         x1, y1, x2, y2 = inst["box"]
@@ -282,6 +293,64 @@ def _render_detect_overlay(img_np: np.ndarray, cleaned: np.ndarray, instances: l
         cv2.putText(overlay, label, (x1 + 3, ly - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
     return overlay
+
+
+_M4_STAMP_OUTLINE_COLOR = (0, 200, 0)
+
+
+def _render_stamp_fit_report(lines: list, instances: list, per_box_info: list, page_info: dict) -> str:
+    sf = page_info["stamp_fit"]
+    lines += [
+        f"**Stamp Fit:** {len(sf['marks'])} stamp(s) accepted, {len(sf['rejected'])} candidate fit(s) rejected "
+        f"&nbsp;|&nbsp; network {sf['infer_ms']:.0f} ms, locate {sf['locate_ms']:.0f} ms, remove "
+        f"{sf['remove_ms']:.0f} ms &nbsp;|&nbsp; locator weights: `{sf['locator_weights']}`",
+        "",
+    ]
+    if sf["marks"]:
+        lines += [
+            "| # | Kind | Parts (name: scale, x, y, blur) | Local IoU | Page change on strokes / control | "
+            "Background | Strength & ink per region |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for i, m in enumerate(sf["marks"], 1):
+            parts = "; ".join(f"{p['name']}: {p['scale']:.3f}, {p['x']:.2f}, {p['y']:.2f}, {p.get('sigma', 0):.2f}"
+                              for p in m["parts"])
+            regions = "; ".join(f"{k}: o={v['strength']} ink=({v['ink'][0]}, {v['ink'][1]}, {v['ink'][2]})"
+                                + ("" if v["source"] == "own" else f" [{v['source']}]")
+                                for k, v in m["regions"].items())
+            lines.append(f"| {i} | {m['kind']} | {parts} | {m['iou']} | {m['change']} / {m['control']} | "
+                         f"{m.get('background', '')} | {regions} |")
+    else:
+        lines.append("No AriaTender stamp was accepted on this page.")
+    if sf["rejected"]:
+        rej = "; ".join(f"{r['kind']} (IoU {r['iou']}, change {r['change']} vs control {r['control']}, "
+                        f"width {r['width_px']} px)" for r in sf["rejected"])
+        lines += ["", f"**Rejected fits:** {rej}"]
+    if instances:
+        lines += ["", "| # | Conf | Box (x1,y1,x2,y2) | Covered by stamp | Handled by | Changed px |", "|---|---|---|---|---|---|"]
+        for i, (inst, pbi) in enumerate(zip(instances, per_box_info), 1):
+            x1, y1, x2, y2 = inst["box"]
+            if pbi["covered_by_stamp"]:
+                handler = "Stamp Fit"
+            elif pbi["fallback"]:
+                handler = sf["fallback_strategy"]
+            elif sf["marks"]:
+                handler = "nothing (stamp confirmed on page; likely false positive)"
+            else:
+                handler = "nothing (no fallback weights)"
+            lines.append(f"| {i} | {inst['conf']:.2f} | {x1}, {y1}, {x2}, {y2} | "
+                         f"{pbi['stamp_cover_frac'] * 100:.0f}% | {handler} | {pbi['changed_px']} |")
+    lines.append(
+        "\n\n**Legend:** green outline = footprint of each accepted stamp, fitted from the known AriaTender "
+        "artwork (the mask is the artwork's own shape, not a per-pixel guess); amber tint = pixels actually "
+        "changed. A fit is accepted only if the page itself changes along the fitted strokes clearly more "
+        "than along the same shape shifted off the mark (change / control). Strength o and ink are "
+        "estimated per region from the page; removal is the exact inverse (observed - a*ink)/(1 - a) with "
+        "a = o * coverage, so text under the mark is recovered, not painted over. If no stamp is accepted, "
+        "every detection box falls back to the Alpha Network strategy; if one is, uncovered boxes are left "
+        "alone as likely false positives. See `watermark_remover/stamp_fit.py`."
+    )
+    return "\n".join(lines)
 
 
 def _render_detect_report(
@@ -314,6 +383,9 @@ def _render_detect_report(
         "",
     ]
 
+    if removal_strategy == doc_detect.STRATEGY_STAMP_FIT:
+        return _render_stamp_fit_report(lines, instances, per_box_info, page_info)
+
     if not instances:
         lines.append(
             f"⚠️ **No detections at all** at confidence ≥ {conf} with model = *{model_choice}*. "
@@ -333,8 +405,8 @@ def _render_detect_report(
     elif is_alpha_net:
         lines += [
             "| # | Conf | Box (x1,y1,x2,y2) | Size (w x h) | Page % | Alpha mean | Alpha max | Alpha px | "
-            "Changed px |",
-            "|---|---|---|---|---|---|---|---|---|",
+            "Changed px | Polarity | Ink px kept |",
+            "|---|---|---|---|---|---|---|---|---|---|---|",
         ]
     else:
         lines += [
@@ -356,9 +428,12 @@ def _render_detect_report(
             alpha_mean_str = f"{pbi.get('alpha_mean', 0.0):.4f}"
             alpha_max_str = f"{pbi.get('alpha_max', 0.0):.4f}"
             alpha_px = pbi.get("alpha_px", 0)
+            polarity = pbi.get("polarity", "—")
+            ink_kept = pbi.get("ink_px_kept", 0)
             lines.append(
                 f"| {i} | {inst['conf']:.2f} | {box_str} | {size_str} | {page_pct_str} | "
-                f"{alpha_mean_str} | {alpha_max_str} | {alpha_px} | {changed_px} |"
+                f"{alpha_mean_str} | {alpha_max_str} | {alpha_px} | {changed_px} | "
+                f"{polarity} | {ink_kept} |"
             )
             continue
 
@@ -391,8 +466,12 @@ def _render_detect_report(
             f"\n\n**Legend:** amber tint = the pixels this strategy actually changed inside each box "
             f"(where predicted alpha was low it may change nothing at all); Alpha mean/max/px come from "
             f"the network's own predicted per-pixel opacity over this box's own won pixels (px = won "
-            f"pixels with alpha > 0.02); no background estimate is used by this strategy at all -- it "
-            f"inverts the compositing equation directly instead. Weights: `{weights_path}` "
+            f"pixels with alpha > 0.02); no background estimate is used by this strategy's OWN removal "
+            f"math -- it inverts the compositing equation directly instead, but Polarity/Ink px kept come "
+            f"from the same background-map-derived ink test Bounded Subtractive uses "
+            f"(`doc_detect.ALPHA_NET_INK_GUARD`, on by default): Ink px kept = won pixels classified as "
+            f"real ink and therefore left byte-identical rather than overwritten by the network's "
+            f"recovery. Weights: `{weights_path}` "
             f"(inference {infer_ms:.1f} ms, shared across every box on this page). Outline colour = "
             f"detection model (magenta = YOLO11s Detect (Half-Frozen, New Dataset)); thin black outline "
             f"(only shown when box padding > 0) = the raw, unpadded box before padding was applied."

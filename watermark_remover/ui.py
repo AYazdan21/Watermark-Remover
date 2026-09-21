@@ -250,7 +250,11 @@ def build_ui():
                                     "as real ink. Alpha Network: removes the mark by inverting a trained "
                                     "network's predicted per-pixel opacity (closed-form, no background estimate) "
                                     "-- needs weights/alpha_net_best_final.pt, and does nothing (with a message) if "
-                                    "that file isn't present."
+                                    "that file isn't present. Stamp Fit (AriaTender): finds the known AriaTender "
+                                    "stamp artwork on the page (anywhere, even if the detector missed it) and "
+                                    "removes it with the exact compositing inverse, so text under the mark is "
+                                    "recovered; only the stamp's own pixels change. Pages with no AriaTender "
+                                    "stamp fall back to Alpha Network on the detection boxes."
                                 ),
                             )
                         with gr.Row():
