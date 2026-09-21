@@ -1,0 +1,11 @@
+image,source,mask_px_pct,polygons,polygon_vs_mask_iou,mask_px_not_in_label_pct
+0_23a4bae7d5.jpg,stamp fit: wide,1.748,15,0.9916,0.33
+0_355a9bf621.jpg,negative (no watermark),0.0,0,1.0,0.0
+0_552cff21fd.jpg,stamp fit: logo+sub,4.001,37,0.9947,0.26
+0_e42bc467d6.jpg,stamp fit: wide,4.045,15,0.9911,0.29
+0_e6b580e44b.jpg,stamp fit: logo+sub,11.313,35,0.9948,0.17
+0_f57fd0e5d7.jpg,stamp fit: wide,0.68,15,0.9911,0.37
+0_f711f9d448.jpg,stamp fit: wide,5.113,15,0.9911,0.29
+70_original.png,stamp fit: logo+sub,11.696,30,0.9951,0.18
+75_original.png,"self-template, 7x3 lattice",1.175,189,0.9807,0.0
+82_original.png,stamp fit: logo+sub,36.198,15,0.9887,0.61

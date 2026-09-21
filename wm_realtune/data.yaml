@@ -1,0 +1,5 @@
+path: C:/Users/Amirreza Yazdanpanah/Desktop/Fanap/Code/Watermark-Remover/wm_realtune
+train: images
+val: images
+nc: 1
+names: ['watermark']
