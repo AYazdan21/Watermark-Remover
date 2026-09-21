@@ -332,11 +332,30 @@ class AlphaCropDataset(torch.utils.data.Dataset):
 # Loss
 # ---------------------------------------------------------------------------
 
-def alpha_loss(model_out, batch, alpha_max, lambdas=(5.0, 1.0, 0.5)):
+# Alpha threshold below which a pixel's *ink* is excluded from direct ink
+# supervision (`L_ink` in `alpha_loss`) and from the coloured-ink
+# diagnostics in `evaluate`. Below this, the closed-form ink target divides
+# by a small `a` (see `alpha_loss`'s docstring), which amplifies ordinary
+# obs/clean noise (JPEG blocking, replay rounding) into a huge, meaningless
+# ink value even though the pixel itself carries almost no ink information
+# -- consistent with `alpha_net`'s note that ink is only meaningful "around
+# and below alpha ~ 0.02"; 0.10 is a deliberately more conservative floor
+# for a *loss/metric* denominator, where amplified noise would otherwise be
+# back-propagated into the network (loss) or thrown into a mean (metric).
+INK_MIN_ALPHA = 0.10
+
+
+def alpha_loss(model_out, batch, alpha_max, lambdas=(5.0, 2.0, 0.5, 3.0)):
     """model_out = (pred_alpha, pred_ink); batch = (obs, clean, alpha,
     w_alpha, w_rec). Returns (total_loss, {"L_alpha":..., "L_rec":...,
-    "L_comp":...}) -- the parts dict holds plain Python floats (already
-    .item()'d).
+    "L_comp":..., "L_ink":...}) -- the parts dict holds plain Python floats
+    (already .item()'d).
+
+    `lambdas` is normally a 4-tuple ``(alpha, rec, comp, ink)``. For
+    backward compatibility, a 3-tuple (the pre-`L_ink` signature) is
+    accepted and treated as ``(*lambdas, 0.0)`` -- i.e. `L_ink` is still
+    computed (it's cheap and informative in `parts`), just weighted out of
+    `total`, so an old 3-tuple caller reproduces the old total exactly.
 
     The alpha target is clamped to `alpha_max` before computing L_alpha --
     the network's own output is bounded there (`alpha_max * sigmoid(...)`
@@ -344,9 +363,56 @@ def alpha_loss(model_out, batch, alpha_max, lambdas=(5.0, 1.0, 0.5)):
     would create an irreducible loss floor for no benefit; `w_rec` already
     excludes those pixels from L_rec/L_comp entirely (see
     `AlphaCropDataset`).
+
+    Ink supervision (`L_ink`) -- WHY IT EXISTS: without it, `ink` only
+    reaches the loss indirectly, through `L_rec` (gradient scaled by
+    roughly ``a/(1-a)``) and `L_comp` (gradient scaled by roughly `a`) --
+    both far weaker than the direct alpha signal, and ~84% of training
+    mark pixels are grey ink anyway, so "predict constant grey" (sigmoid(0)
+    = 0.5, the head's own init) is close to a loss-minimising strategy for
+    the ink head under those three terms alone. Measured on the v2
+    checkpoint: the ink head's weights never moved off their
+    initialisation across 56 epochs of exactly this indirect training.
+
+    `ink_gt` inverts the compositing equation ``obs = a*ink + (1-a)*clean``
+    directly for the ink term:
+
+        ink_gt = (obs - (1 - a) * clean) / a
+
+    This is EXACT (0.0 MAE) when `obs`/`clean` are the lossless replay
+    targets, and only mildly perturbed by a JPEG-compressed `obs` (~5.7/255
+    MAE at quality 85, for ``a >= INK_MIN_ALPHA`` -- which covers ~92% of
+    mark pixels) -- far cleaner than what an undertrained ink head predicts
+    (~82/255 MAE against real ink on real pages). ``alpha.clamp(min=
+    INK_MIN_ALPHA)`` in the denominator keeps this well-conditioned near
+    ``a=0``, where a small `a` would otherwise amplify ordinary obs/clean
+    noise into a huge, meaningless `ink_gt`; `ink_w` then ZEROES OUT those
+    same low-alpha pixels outright (not merely down-weights them), so the
+    clamp only has to keep `ink_gt` numerically finite there, not accurate
+    -- they never contribute to `l_ink` either way.
+
+    `ink_w` also weights by `alpha` itself among the pixels it keeps (a
+    pixel the network is more confident is watermark should dominate the
+    ink signal there), and -- this is the important part -- `l_ink` is
+    normalised by the WEIGHT SUM actually applied (``ink_w.sum() *
+    pred_ink.shape[1]``), not by the image's total pixel count. Normalising
+    over the whole image (as `L_rec`/`L_comp`'s plain `.mean()` effectively
+    does for their indirect ink gradient) is exactly what diluted the old
+    signal to nothing: most pixels in most crops are background or grey
+    ink, so a whole-image average drowns out the rare coloured-ink pixels
+    that most need supervision. Normalising by the weight sum instead means
+    a batch with only a few percent colour-eligible pixels still produces
+    an ink-head gradient of normal magnitude, not one diluted 20-50x by the
+    rest of the crop. A batch with no pixel at all at ``alpha >=
+    INK_MIN_ALPHA`` gives ``ink_w.sum() == 0``; the ``.clamp(min=1.0)`` on
+    the denominator then makes `l_ink` exactly ``0.0`` (numerator is also
+    exactly 0 there) rather than a ``0/0`` NaN.
     """
     pred_alpha, pred_ink = model_out
     obs, clean, alpha, w_alpha, w_rec = batch
+
+    if len(lambdas) == 3:
+        lambdas = (*lambdas, 0.0)
 
     alpha_clamped = torch.clamp(alpha, max=alpha_max)
     rec = alpha_net.recover(obs, pred_alpha, pred_ink, alpha_max)
@@ -355,9 +421,19 @@ def alpha_loss(model_out, batch, alpha_max, lambdas=(5.0, 1.0, 0.5)):
     comp = pred_alpha * pred_ink + (1.0 - pred_alpha) * clean
     l_comp = (w_rec * (comp - obs).abs().mean(dim=1, keepdim=True)).mean()
 
-    la, lr, lc = lambdas
-    total = la * l_alpha + lr * l_rec + lc * l_comp
-    parts = {"L_alpha": float(l_alpha.item()), "L_rec": float(l_rec.item()), "L_comp": float(l_comp.item())}
+    # Ink supervision. Weighted by alpha (confident pixels dominate) and
+    # normalised by the WEIGHT SUM, not the image -- normalising over all
+    # pixels is exactly what diluted the old indirect ink signal to nothing.
+    ink_w = torch.where(alpha >= INK_MIN_ALPHA, alpha, torch.zeros_like(alpha))
+    ink_gt = torch.clamp((obs - (1.0 - alpha) * clean) / alpha.clamp(min=INK_MIN_ALPHA), 0.0, 1.0)
+    l_ink = (ink_w * (pred_ink - ink_gt).abs()).sum() / torch.clamp(ink_w.sum() * pred_ink.shape[1], min=1.0)
+
+    la, lr, lc, li = lambdas
+    total = la * l_alpha + lr * l_rec + lc * l_comp + li * l_ink
+    parts = {
+        "L_alpha": float(l_alpha.item()), "L_rec": float(l_rec.item()),
+        "L_comp": float(l_comp.item()), "L_ink": float(l_ink.item()),
+    }
     return total, parts
 
 
@@ -371,12 +447,65 @@ def evaluate(model, loader, device, alpha_max) -> dict:
     0.01) and background regions. Pixels with alpha_gt > alpha_max are
     excluded from every metric here (they are architecturally
     unrecoverable -- see `alpha_loss`); `frac_alpha_gt_max` reports how
-    much of the val set that was. `val_score` is lower-is-better and
-    penalises any damage `recover` does to genuinely clean pixels."""
+    much of the val set that was.
+
+    Ink/colour diagnostics (added after the v2 checkpoint's ink head was
+    found to have collapsed to constant grey -- see `alpha_loss`'s
+    docstring for the full story -- because nothing in this function used
+    to measure ink at all, so 60 epochs of that collapse were invisible
+    here despite `improvement_wm` reading 0.91):
+
+    - `ink_mae_wm` / `ink_sat_pred_wm` / `ink_sat_true_wm`: over mark
+      pixels with ``alpha >= INK_MIN_ALPHA`` (well-conditioned for the
+      closed-form ink target -- see `alpha_loss`), the alpha-weighted mean
+      ink error, and the plain mean predicted vs. true ink SATURATION
+      (``max(channel) - min(channel)``, 0 for perfect grey). A collapsed
+      ink head reads near-0 `ink_sat_pred_wm` regardless of
+      `ink_sat_true_wm` -- these two numbers together are what exposes the
+      collapse that `rec_mae_wm_255`/`improvement_wm` cannot (most mark
+      pixels are grey ink, so a grey-only prediction still reconstructs
+      most of the page reasonably well on average).
+    - The COLOURED SUBSET: mark pixels with ``alpha > 0.05``, true ink
+      saturation ``> 0.06``, and ``alpha <= alpha_max`` (i.e. still inside
+      `recoverable`). `rec_mae_colored_255` / `identity_mae_colored_255` /
+      `improvement_wm_colored` mirror the `_wm` reconstruction metrics but
+      restricted to this subset -- the part of the mark an ink collapse
+      actually damages (a grey mark's reconstruction barely depends on the
+      ink head being right, since grey is close to its output regardless).
+      `frac_colored` reports what fraction of all mark pixels (`wm_mask`,
+      ``alpha > 0.01`` and recoverable) this subset is -- expect it small
+      (this dataset is ~84% grey ink by pixel count).
+    - Zero-division guards: if a val set/batch has no pixel at
+      ``alpha >= INK_MIN_ALPHA``, `ink_mae_wm`/`ink_sat_pred_wm`/
+      `ink_sat_true_wm` are defined as ``0.0`` (not NaN). If it has no
+      coloured-subset pixel at all, `rec_mae_colored_255` /
+      `identity_mae_colored_255` are `0.0` and `improvement_wm_colored` is
+      `0.0` (the same "identity_mae <= 1e-8 -> 0.0" convention
+      `improvement_wm` already used) -- these zeros mean "no coloured
+      pixels observed to measure", not "perfect colour recovery"; always
+      check `frac_colored` (also well-defined as `0.0` in this case)
+      before trusting them in isolation.
+
+    `val_score` is lower-is-better and now has THREE terms: the original
+    ``rec_mae_wm_255 + 2.0 * max(0, rec_mae_bg_255 - identity_mae_bg_255)``
+    (overall mark recovery, penalised for any damage `recover` does to
+    genuinely clean pixels) PLUS ``2.0 * rec_mae_colored_255`` -- an
+    explicit extra penalty for the coloured-subset failure mode this
+    change exists to fix, on top of (not instead of) its contribution to
+    the first term. This score is NOT COMPARABLE to `val_score` values
+    logged by earlier runs/checkpoints (e.g. the v2 checkpoint's saved
+    `val_metrics`): a checkpoint picked as "best" under the old 2-term
+    score may not be best under this one, and the two numbers must not be
+    compared side by side.
+    """
     model.eval()
-    sums = dict(alpha_err_wm=0.0, n_wm=0, alpha_bg=0.0, n_bg=0,
-                rec_err_wm=0.0, id_err_wm=0.0, rec_err_bg=0.0, id_err_bg=0.0,
-                n_excluded=0, n_total=0)
+    sums = dict(
+        alpha_err_wm=0.0, n_wm=0, alpha_bg=0.0, n_bg=0,
+        rec_err_wm=0.0, id_err_wm=0.0, rec_err_bg=0.0, id_err_bg=0.0,
+        n_excluded=0, n_total=0,
+        ink_err_wm=0.0, ink_w_wm=0.0, ink_sat_pred_wm=0.0, ink_sat_true_wm=0.0, n_ink_wm=0,
+        rec_err_colored=0.0, id_err_colored=0.0, n_colored=0,
+    )
 
     with torch.no_grad():
         for obs, clean, alpha, _w_alpha, _w_rec in loader:
@@ -395,6 +524,19 @@ def evaluate(model, loader, device, alpha_max) -> dict:
             rec_err = (rec - clean).abs().mean(dim=1, keepdim=True) * 255.0
             id_err = (obs - clean).abs().mean(dim=1, keepdim=True) * 255.0
 
+            # --- ink/colour diagnostics -- see docstring. `ink_gt` is the
+            # same closed-form inversion `alpha_loss` uses for `L_ink`;
+            # `alpha.clamp(min=INK_MIN_ALPHA)` keeps it finite everywhere
+            # even though only `alpha >= INK_MIN_ALPHA` pixels are actually
+            # scored (elsewhere the target would be noise-dominated).
+            ink_gt = torch.clamp((obs - (1.0 - alpha) * clean) / alpha.clamp(min=INK_MIN_ALPHA), 0.0, 1.0)
+            ink_pix_err = (pred_ink - ink_gt).abs().mean(dim=1, keepdim=True)
+            sat_true = ink_gt.max(dim=1, keepdim=True).values - ink_gt.min(dim=1, keepdim=True).values
+            sat_pred = pred_ink.max(dim=1, keepdim=True).values - pred_ink.min(dim=1, keepdim=True).values
+
+            ink_mask = (alpha >= INK_MIN_ALPHA) & recoverable
+            colored_mask = (alpha > 0.05) & (sat_true > 0.06) & recoverable
+
             n_wm = int(wm_mask.sum().item())
             n_bg = int(bg_mask.sum().item())
             if n_wm:
@@ -407,11 +549,30 @@ def evaluate(model, loader, device, alpha_max) -> dict:
                 sums["rec_err_bg"] += float(rec_err[bg_mask].sum().item())
                 sums["id_err_bg"] += float(id_err[bg_mask].sum().item())
                 sums["n_bg"] += n_bg
+
+            n_ink = int(ink_mask.sum().item())
+            if n_ink:
+                ink_weight = alpha * ink_mask.to(alpha.dtype)
+                sums["ink_err_wm"] += float((ink_weight * ink_pix_err).sum().item())
+                sums["ink_w_wm"] += float(ink_weight.sum().item())
+                sums["ink_sat_pred_wm"] += float(sat_pred[ink_mask].sum().item())
+                sums["ink_sat_true_wm"] += float(sat_true[ink_mask].sum().item())
+                sums["n_ink_wm"] += n_ink
+
+            n_colored = int(colored_mask.sum().item())
+            if n_colored:
+                sums["rec_err_colored"] += float(rec_err[colored_mask].sum().item())
+                sums["id_err_colored"] += float(id_err[colored_mask].sum().item())
+                sums["n_colored"] += n_colored
+
             sums["n_excluded"] += int((~recoverable).sum().item())
             sums["n_total"] += int(alpha.numel())
 
     n_wm = max(sums["n_wm"], 1)
     n_bg = max(sums["n_bg"], 1)
+    n_ink = max(sums["n_ink_wm"], 1)
+    n_colored = max(sums["n_colored"], 1)
+    ink_w_sum = max(sums["ink_w_wm"], 1e-8)
 
     alpha_mae_wm = sums["alpha_err_wm"] / n_wm
     alpha_mean_bg = sums["alpha_bg"] / n_bg
@@ -421,8 +582,23 @@ def evaluate(model, loader, device, alpha_max) -> dict:
     identity_mae_bg_255 = sums["id_err_bg"] / n_bg
     frac_alpha_gt_max = sums["n_excluded"] / max(sums["n_total"], 1)
 
+    ink_mae_wm = (sums["ink_err_wm"] / ink_w_sum) if sums["n_ink_wm"] else 0.0
+    ink_sat_pred_wm = (sums["ink_sat_pred_wm"] / n_ink) if sums["n_ink_wm"] else 0.0
+    ink_sat_true_wm = (sums["ink_sat_true_wm"] / n_ink) if sums["n_ink_wm"] else 0.0
+
+    rec_mae_colored_255 = (sums["rec_err_colored"] / n_colored) if sums["n_colored"] else 0.0
+    identity_mae_colored_255 = (sums["id_err_colored"] / n_colored) if sums["n_colored"] else 0.0
+    improvement_wm_colored = (
+        1.0 - rec_mae_colored_255 / identity_mae_colored_255
+    ) if identity_mae_colored_255 > 1e-8 else 0.0
+    frac_colored = (sums["n_colored"] / sums["n_wm"]) if sums["n_wm"] else 0.0
+
     improvement_wm = (1.0 - rec_mae_wm_255 / identity_mae_wm_255) if identity_mae_wm_255 > 1e-8 else 0.0
-    val_score = rec_mae_wm_255 + 2.0 * max(0.0, rec_mae_bg_255 - identity_mae_bg_255)
+    val_score = (
+        rec_mae_wm_255
+        + 2.0 * max(0.0, rec_mae_bg_255 - identity_mae_bg_255)
+        + 2.0 * rec_mae_colored_255
+    )
 
     return {
         "alpha_mae_wm": alpha_mae_wm,
@@ -434,6 +610,13 @@ def evaluate(model, loader, device, alpha_max) -> dict:
         "identity_mae_bg_255": identity_mae_bg_255,
         "val_score": val_score,
         "frac_alpha_gt_max": frac_alpha_gt_max,
+        "ink_mae_wm": ink_mae_wm,
+        "ink_sat_pred_wm": ink_sat_pred_wm,
+        "ink_sat_true_wm": ink_sat_true_wm,
+        "rec_mae_colored_255": rec_mae_colored_255,
+        "identity_mae_colored_255": identity_mae_colored_255,
+        "improvement_wm_colored": improvement_wm_colored,
+        "frac_colored": frac_colored,
     }
 
 
@@ -452,7 +635,8 @@ def _seed_everything(seed: int) -> None:
 def _append_metrics_csv(path, epoch, train_parts, val_metrics, lr, seconds):
     path = pathlib.Path(path)
     is_new = not path.exists()
-    fieldnames = (["epoch", "train_loss", "train_L_alpha", "train_L_rec", "train_L_comp", "lr", "seconds"]
+    fieldnames = (["epoch", "train_loss", "train_L_alpha", "train_L_rec", "train_L_comp", "train_L_ink",
+                   "lr", "seconds"]
                   + list(val_metrics.keys()))
     with open(path, "a", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
@@ -464,6 +648,7 @@ def _append_metrics_csv(path, epoch, train_parts, val_metrics, lr, seconds):
             "train_L_alpha": train_parts["L_alpha"],
             "train_L_rec": train_parts["L_rec"],
             "train_L_comp": train_parts["L_comp"],
+            "train_L_ink": train_parts["L_ink"],
             "lr": lr,
             "seconds": seconds,
         }
@@ -578,7 +763,7 @@ def train(config: dict, on_epoch_end=None, log=print) -> dict:
     for epoch in range(start_epoch, total_epochs + 1):
         model.train()
         t_epoch0 = time.time()
-        part_sums = {"total": 0.0, "L_alpha": 0.0, "L_rec": 0.0, "L_comp": 0.0}
+        part_sums = {"total": 0.0, "L_alpha": 0.0, "L_rec": 0.0, "L_comp": 0.0, "L_ink": 0.0}
         n_batches = 0
 
         for obs, clean, alpha, w_alpha, w_rec in train_loader:
@@ -618,7 +803,7 @@ def train(config: dict, on_epoch_end=None, log=print) -> dict:
             global_step += 1
 
             part_sums["total"] += float(loss.item())
-            for k in ("L_alpha", "L_rec", "L_comp"):
+            for k in ("L_alpha", "L_rec", "L_comp", "L_ink"):
                 part_sums[k] += parts[k]
             n_batches += 1
 
@@ -633,7 +818,9 @@ def train(config: dict, on_epoch_end=None, log=print) -> dict:
             f"[alpha_train] epoch {epoch}/{total_epochs} "
             f"train_loss={train_parts['total']:.4f} "
             f"(alpha={train_parts['L_alpha']:.4f} rec={train_parts['L_rec']:.4f} "
-            f"comp={train_parts['L_comp']:.4f}) val_score={val_metrics['val_score']:.4f} "
+            f"comp={train_parts['L_comp']:.4f} ink={train_parts['L_ink']:.4f}) "
+            f"val_score={val_metrics['val_score']:.4f} "
+            f"ink_sat pred/true={val_metrics['ink_sat_pred_wm']:.3f}/{val_metrics['ink_sat_true_wm']:.3f} "
             f"lr={lr_now:.2e} time={epoch_seconds:.1f}s"
         )
         _append_metrics_csv(metrics_path, epoch, train_parts, val_metrics, lr_now, epoch_seconds)

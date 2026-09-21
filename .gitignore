@@ -72,3 +72,16 @@ archives/
 # More locally staged real images (provenance varies; keep local)
 images_scraped2/
 Images-wm/
+
+# scripts/alpha_net/benchmark.py output (CSVs, summary, panels) -- large,
+# reproducible from the script + a checkpoint, not source.
+benchmark_out/
+
+# wm_realtune: the real pages themselves (and anything that reproduces them)
+# stay local, like wm_testset/images; labels/masks/targets' opacity are committed.
+wm_realtune/images/
+wm_realtune/overlays/
+wm_realtune/alpha_targets/*_clean.png
+
+# convenience bundle for uploading the stamps to Kaggle
+assets/stamps/stamps.zip
