@@ -58,6 +58,22 @@ Pipeline (``remove_stamps``)
    mark and is bounded: +-40 levels of ink brightness moves black text
    under the mark by about +-12 levels. Regions with too few pixels borrow
    the parameters of a sibling region.
+4b. Edge profile (``EDGE_PROFILE``): the Gaussian edge blur from step 3 is
+    right in the interior but wrong exactly at the letter edges (see Honest
+    limits below), so it is replaced, per ink region, by a small per-page
+    fitted curve ``a = P(d)``, ``d`` = signed distance (sub-pixel, page px)
+    from each pixel to the template's own 0.5 iso-contour at the fitted
+    position/scale. ``P`` is piecewise-linear on fixed 0.5px knots from
+    ``d = -3`` (hard-pinned to 0 -- caps how far outside the edge the mark
+    may reach) to ``d = min(4, region depth)``, fit by regularised linear
+    least squares (smoothness + a prior pulling knots with little data back
+    to today's blurred model) with 3-4 rounds of trimming against page
+    text/lines near the mark. Ink stays fixed at its step-4 value. A region
+    keeps its fitted curve only if it lowers the same trimmed residual the
+    old model gets by >= 3%; otherwise (or with too few edge pixels to fit
+    at all) it falls back to a sibling region's curve, or to today's model
+    unchanged -- so a page can only get better, never worse, byte-for-byte
+    verified with ``EDGE_PROFILE = False``.
 5. Remove: the exact inverse, written ONLY where the fitted stamp has
    non-zero opacity. Every pixel outside the stamps' own footprint is
    byte-identical to the input.
@@ -68,8 +84,13 @@ Honest limits
   found here (``doc_detect``'s Stamp Fit strategy falls back to the Alpha
   Network for detection boxes no fitted stamp covers).
 - The artwork files' edges are slightly softer than some sites' crisp
-  rendering, so a faint rim can remain along letter edges on some pages
-  (measured: residual mark contrast ~1-10 grey levels, from ~35 before).
+  rendering, so before step 4b a faint rim remained along letter edges on
+  some pages (measured: residual mark contrast ~1-10 grey levels, from ~35
+  before removal at all). The fitted edge profile (step 4b) removes most of
+  this on pages with enough clean edge pixels to fit it (see
+  ``scripts/alpha_net/eval_stamp_rim.py`` for per-page ghost-score numbers);
+  it still cannot undo JPEG ringing baked into the page's own pixels, and a
+  rim over dense page text is fit from fewer usable pixels so improves less.
 - Rotation is fixed at 0 and the subtitle layout is fixed; a rotated or
   re-laid-out stamp will be rejected by the evidence check (and fall back)
   rather than fitted wrongly.
@@ -81,6 +102,8 @@ from functools import lru_cache
 import cv2
 import numpy as np
 from PIL import Image
+from scipy.optimize import lsq_linear
+from scipy.special import erf
 
 from .config import BASE_DIR
 
@@ -125,6 +148,58 @@ MIN_LOCAL_IOU = 0.45
 MIN_WIDTH_PX = 60
 
 _LUMA = np.array([0.299, 0.587, 0.114], np.float32)
+
+# ---------------------------------------------------------------------------
+# Edge profile (step 4b): a = P(d) instead of a = o * cov_blurred
+# ---------------------------------------------------------------------------
+# Master switch: False reproduces the pre-edge-profile output exactly,
+# byte-for-byte (step 4b is skipped entirely).
+EDGE_PROFILE = True
+# Knot grid: fixed 0.5px spacing from -D_OUT (hard-pinned to alpha 0) to
+# min(MAX_D_IN, the region's own interior depth).
+D_OUT = 3.0
+KNOT_STEP = 0.5
+MAX_D_IN = 4.0
+# A region needs at least this many pixels with d > -D_OUT (before, and
+# again after, the outlier pre-filter) to fit its own curve; otherwise it
+# borrows an accepted sibling region's curve (evaluated on its own distance
+# map), or -- if no sibling has one -- keeps today's model.
+MIN_EDGE_PIXELS = 400
+# A fitted (or borrowed) curve is used only if it lowers the same trimmed
+# residual today's model gets, by at least this fraction.
+ACCEPT_MARGIN = 0.03
+# Up-front outlier cap on |obs - B| (0-1 scale): page content far darker
+# than any mark can produce is dropped before fitting (matches the 80-level
+# cap `_colour_change` uses on the same 0-1 scale, 80/255 ~= 0.314).
+OUTLIER_ABS = 0.35
+# Acceptance uses a tighter, PER-MODEL cap on the POST-removal luminance
+# residual (0-1 scale, 25 grey levels/255) -- same cut
+# scripts/alpha_net/eval_stamp_rim.py's ghost score uses -- so a region's own
+# accept/reject decision tracks the externally-reported metric exactly,
+# rather than a looser fitting-time cap that can leave the accept test
+# insensitive to a rim hiding in the pixels the fit itself keeps.
+CONTENT_CUT_LUM = 25.0 / 255.0
+# Regularisation weights (see module docstring, step 4b), scaled by the
+# number of kept edge pixels so they stay dimensionless. There are only
+# K-2 smoothness rows (~13) and K-1 prior rows (~13) against 3*n_eff data
+# rows (tens of thousands), so lam_smooth/lam_prior must stay far below
+# n_eff or a handful of regularisation rows outweigh the entire data term
+# and crush P(d) into a near-flat ramp with no real edge transition
+# (measured: at the original 0.5/0.02 -- i.e. lam_smooth, lam_prior on the
+# same order as n_eff itself -- the fitted curve was uniformly WORSE than
+# today's model on every region tested, by the acceptance test's own exact-
+# reconstruction metric). Tuned on wm_realtune (scripts/alpha_net/
+# eval_stamp_rim.py): this range gives a real median ~12% residual
+# reduction on the regions with enough clean edge pixels to fit, while the
+# acceptance test (not this constant) is what keeps every other region and
+# page safe.
+LAM_SMOOTH_PER_PIXEL = 1e-5
+LAM_PRIOR_PER_PIXEL = 1e-4
+# Window margin (page px) around each part's bbox: must cover D_OUT+MAX_D_IN
+# plus slack for the 4x-supersampled distance transform's own border effects.
+EDGE_WINDOW_MARGIN = 9
+# Supersampling factor for the sub-pixel signed-distance map.
+SS = 4
 
 
 # ---------------------------------------------------------------------------
@@ -532,6 +607,227 @@ def _paper_background(img, marks):
     return B
 
 
+# ---------------------------------------------------------------------------
+# Edge profile: a = P(d) (see module docstring, step 4b)
+# ---------------------------------------------------------------------------
+
+def _render_region_crisp_4x(part, region, x0, y0, w, h):
+    """CRISP (sigma=0) coverage of one region, rendered at SS x supersampling
+    in the page window (x0, y0, w, h). Used only for the geometry (the 0.5
+    iso-contour), never as the alpha value itself."""
+    tw, th = _size(part["name"], part["scale"])
+    t = _resized(part["name"], region, tw * SS, th * SS)
+    M = np.float32([[1, 0, (part["x"] - x0) * SS], [0, 1, (part["y"] - y0) * SS]])
+    return cv2.warpAffine(t, M, (w * SS, h * SS), flags=cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+
+def _signed_distance(part, region, x0, y0, w, h):
+    """Sub-pixel signed distance (page px, +inside/-outside) from each page
+    pixel centre in the window to the region's own 0.5 iso-contour, via a
+    4x-supersampled distance transform, area-averaged back down to page
+    pixels (tested against sampling the centre sub-pixel directly; area
+    averaging was smoother and made no visible difference to the fit)."""
+    cov4 = _render_region_crisp_4x(part, region, x0, y0, w, h)
+    mask4 = (cov4 >= 0.5).astype(np.uint8)
+    dist_in = cv2.distanceTransform(mask4, cv2.DIST_L2, 5)
+    dist_out = cv2.distanceTransform(1 - mask4, cv2.DIST_L2, 5)
+    # distanceTransform gives >=1 for the innermost/outermost pixel layer
+    # (distance to the nearest pixel of the OTHER class); the true geometric
+    # edge sits half a pixel closer, hence the -0.5 on both sides.
+    d4 = np.where(mask4 > 0, dist_in - 0.5, 0.5 - dist_out).astype(np.float32)
+    d = cv2.resize(d4, (w, h), interpolation=cv2.INTER_AREA) / float(SS)
+    return d
+
+
+def _knots_for(d_in):
+    """Fixed 0.5px knots from -D_OUT (pinned to 0) to d_in, capped."""
+    d_in = float(np.clip(d_in, KNOT_STEP, MAX_D_IN))
+    d_in = min(MAX_D_IN, float(np.ceil(d_in / KNOT_STEP) * KNOT_STEP))
+    n = int(round((d_in + D_OUT) / KNOT_STEP)) + 1
+    return np.linspace(-D_OUT, d_in, n).astype(np.float32)
+
+
+def _pl_basis(d, knots):
+    """Piecewise-linear hat-function basis: (len(d), len(knots)); P(d) =
+    Phi @ P_knots. Clamped outside the knot range (P = P(first)/P(last))."""
+    d = np.clip(d, knots[0], knots[-1])
+    idx = np.searchsorted(knots, d, side="right") - 1
+    idx = np.clip(idx, 0, len(knots) - 2)
+    d0, d1 = knots[idx], knots[idx + 1]
+    t = np.where(d1 > d0, (d - d0) / np.maximum(d1 - d0, 1e-9), 0.0)
+    Phi = np.zeros((d.shape[0], len(knots)), np.float32)
+    rows = np.arange(d.shape[0])
+    Phi[rows, idx] = (1 - t).astype(np.float32)
+    Phi[rows, idx + 1] = t.astype(np.float32)
+    return Phi
+
+
+# Same range scripts/alpha_net/eval_stamp_rim.py's ghost score bins over
+# (fixed, not tied to a region's own D_OUT/D_in) so acceptance here tracks
+# exactly what gets reported, including the sliver just past the -D_OUT
+# hard cutoff where a small stale tail of the OLD blurred model can still
+# sit.
+_BIAS_BINS = np.arange(-4.0, 4.0, KNOT_STEP)
+
+
+def _binned_bias_rms(d_vals, res_lum):
+    """RMS of the per-0.5px-bin MEAN of a SIGNED luminance residual, over
+    `d_vals` in [-D_OUT, MAX_D_IN]. This is what a visible rim looks like: a
+    systematic bias that survives binning, as opposed to per-pixel noise
+    that averages out. Matters because a per-pixel residual NORM (unsigned,
+    averaged over the whole footprint -- mostly deep-interior/deep-exterior
+    pixels both models already fit well) barely moves even when a fit trades
+    a small overall improvement for a bigger bias concentrated right at the
+    edge; this metric is directly sensitive to that trade and is the same
+    one `scripts/alpha_net/eval_stamp_rim.py`'s ghost score uses, so
+    acceptance here tracks what is actually measured/reported."""
+    means = []
+    for lo in _BIAS_BINS:
+        m = (d_vals >= lo) & (d_vals < lo + KNOT_STEP)
+        if m.any():
+            means.append(float(res_lum[m].mean()))
+    if not means:
+        return 0.0
+    means = np.asarray(means)
+    return float(np.sqrt(np.mean(means * means)))
+
+
+def _recon_lum_residual(obs_flat, B_flat, a_flat, ink):
+    """Exact lum(B) - lum(cleaned) for the SAME exact inverse `remove_stamps`
+    writes out (and scripts/alpha_net/eval_stamp_rim.py's ghost score
+    measures) -- NOT the linear approximation `(obs-B) - a*(ink-B)` (which
+    equals `-(1-a) * (B-cleaned)`). Two models being compared here generally
+    have different alpha at the same pixel, so that missing `(1-a)` factor
+    is not a shared constant: it lets a model with a locally larger alpha
+    look better under the linear residual while its true post-division
+    residual (what actually lands on the page) is worse. Must match exactly
+    so acceptance here cannot diverge from what gets reported/shipped."""
+    a = np.clip(a_flat, 0.0, MAX_ALPHA).astype(np.float64)
+    ink64 = np.asarray(ink, np.float64)
+    cleaned = np.clip((obs_flat - a[:, None] * ink64[None, :]) / (1.0 - a[:, None]), 0.0, 1.0)
+    return (B_flat - cleaned) @ _LUMA.astype(np.float64)
+
+
+def _smoothness_rows(K):
+    """Second-difference rows over the K-1 FREE knots (knot 0 is pinned to
+    alpha 0, not a variable -- its (always zero) contribution is simply
+    omitted rather than shifted onto the RHS)."""
+    rows = []
+    for j in range(1, K - 1):
+        row = np.zeros(K - 1)
+        for full_idx, coef in ((j - 1, 1.0), (j, -2.0), (j + 1, 1.0)):
+            if full_idx >= 1:
+                row[full_idx - 1] = coef
+        rows.append(row)
+    return np.array(rows) if rows else np.zeros((0, K - 1))
+
+
+def _fit_edge_profile_region(d_w, obs_w, B_w, ink, o_old, cov_w, sigma_old):
+    """Fit P(d) for one ink region in its own window. Returns
+    {"status": "insufficient"} when there are too few usable edge pixels,
+    else {"status": "ok", "knots", "P_free", "alpha_win", "residual_before",
+    "residual_after", "accept"}. `alpha_win` and the residuals are always
+    computed when status is "ok", regardless of `accept` -- the caller
+    decides whether to use them."""
+    footprint = d_w > -D_OUT
+    if int(footprint.sum()) < MIN_EDGE_PIXELS:
+        return dict(status="insufficient")
+    ys, xs = np.nonzero(footprint)
+    dv = d_w[ys, xs].astype(np.float32)
+    y = (obs_w[ys, xs] - B_w[ys, xs]).astype(np.float64)
+    imb = (ink[None, :] - B_w[ys, xs]).astype(np.float64)
+    covv = cov_w[ys, xs].astype(np.float64)
+
+    keep0 = np.linalg.norm(y, axis=1) <= OUTLIER_ABS
+    if int(keep0.sum()) < MIN_EDGE_PIXELS:
+        return dict(status="insufficient")
+
+    knots = _knots_for(min(MAX_D_IN, float(dv.max())))
+    K = len(knots)
+    Phi_all = _pl_basis(dv, knots)              # (n, K)
+    Phi = Phi_all[:, 1:].astype(np.float64)     # (n, K-1): free knots only
+
+    n_eff = int(keep0.sum())
+    lam_smooth = LAM_SMOOTH_PER_PIXEL * n_eff
+    lam_prior = LAM_PRIOR_PER_PIXEL * n_eff
+
+    # Prior P0: today's blurred model projected onto the same basis; where a
+    # knot has almost no support in this region's window, fall back to the
+    # analytic Gaussian-edge profile with the same strength/blur instead of
+    # an undefined/noisy bin.
+    model_v = o_old * covv
+    denom = Phi_all.sum(0)
+    numer = Phi_all.T @ model_v
+    if sigma_old > 1e-6:
+        analytic = o_old * 0.5 * (1.0 + erf(knots / (sigma_old * np.sqrt(2.0))))
+    else:
+        analytic = o_old * (knots >= 0).astype(np.float64)
+    P0_full = np.where(denom >= 5, numer / np.maximum(denom, 1e-9), analytic).astype(np.float64)
+    prior_target = P0_full[1:]
+
+    S = _smoothness_rows(K)
+    keep_idx = keep0.copy()
+    P_free = prior_target.copy()
+    for _ in range(4):
+        sel = np.nonzero(keep_idx)[0]
+        if sel.size < 50:
+            break
+        rows = [Phi[sel] * imb[sel, ch:ch + 1] for ch in range(3)]
+        rhs = [y[sel, ch] for ch in range(3)]
+        A = np.vstack(rows + [np.sqrt(lam_smooth) * S, np.sqrt(lam_prior) * np.eye(K - 1)])
+        b = np.concatenate(rhs + [np.zeros(S.shape[0]), np.sqrt(lam_prior) * prior_target])
+        sol = lsq_linear(A, b, bounds=(0.0, MAX_ALPHA))
+        P_free = sol.x
+        pred_a = Phi @ P_free
+        res_all = np.linalg.norm(y - pred_a[:, None] * imb, axis=1)
+        thresh = np.percentile(res_all[keep_idx], 80)
+        keep_idx = (res_all <= thresh) & keep0
+
+    Phi_win = _pl_basis(d_w.ravel().astype(np.float32), knots)[:, 1:]
+    alpha_win = (Phi_win.astype(np.float64) @ P_free).reshape(d_w.shape)
+    alpha_win = np.clip(np.where(d_w > -D_OUT, alpha_win, 0.0), 0, MAX_ALPHA).astype(np.float32)
+
+    # Acceptance: over the FULL window (not just the footprint used to fit),
+    # same range and pixel-selection style as the external ghost score -- a
+    # SHARED mask (safe under both models' own post-removal residual, capped
+    # at CONTENT_CUT_LUM), not the looser IRLS trim used only to keep the
+    # least-squares solve itself robust, and not a separate per-model mask
+    # (which can quietly compare different pixel sets and make a fit look
+    # better than it is). The full window also catches a stale tail the OLD
+    # blurred model can still leave just past the new model's hard -D_OUT
+    # cutoff. See CONTENT_CUT_LUM's comment.
+    d_full = d_w.ravel().astype(np.float32)
+    obs_full = obs_w.reshape(-1, 3).astype(np.float64)
+    B_full = B_w.reshape(-1, 3).astype(np.float64)
+    res_lum_new = _recon_lum_residual(obs_full, B_full, alpha_win.ravel(), ink)
+    res_lum_old = _recon_lum_residual(obs_full, B_full, o_old * cov_w.ravel(), ink)
+    mask_cmp = (np.abs(res_lum_new) <= CONTENT_CUT_LUM) & (np.abs(res_lum_old) <= CONTENT_CUT_LUM)
+    res_new = _binned_bias_rms(d_full[mask_cmp], res_lum_new[mask_cmp])
+    res_old = _binned_bias_rms(d_full[mask_cmp], res_lum_old[mask_cmp])
+    accept = res_old > 1e-9 and res_new <= res_old * (1.0 - ACCEPT_MARGIN)
+
+    return dict(status="ok", knots=knots, P_free=P_free, alpha_win=alpha_win,
+                residual_before=res_old, residual_after=res_new, accept=bool(accept))
+
+
+def _profile_info(pr, used):
+    """JSON-serialisable per-region report of the edge-profile step."""
+    if pr.get("status") != "ok":
+        return dict(used=False, reason="insufficient_data", knots_d=[], knots_a=[],
+                    residual_before=None, residual_after=None)
+    if pr.get("mark_reverted"):
+        reason = "reverted_pooled_regression"
+    else:
+        reason = ("borrowed" if pr.get("borrowed") else "accepted") if used else \
+                 ("borrowed_not_improved" if pr.get("borrowed") else "not_improved")
+    knots_a = [0.0] + [round(float(v), 3) for v in pr["P_free"]]
+    return dict(used=bool(used), reason=reason,
+                knots_d=[round(float(v), 3) for v in pr["knots"]], knots_a=knots_a,
+                residual_before=round(float(pr["residual_before"]), 4),
+                residual_after=round(float(pr["residual_after"]), 4))
+
+
 def remove_stamps(img, marks):
     """Exact removal of already-located `marks` (from locate_stamps).
     Returns (cleaned uint8, alpha map float32, per-mark info list). Pixels
@@ -565,19 +861,109 @@ def remove_stamps(img, marks):
         for p in parts:
             names = list(templates()[p["name"]]["regions"])
             for rname in names:
-                regions.append((f"{p['name']}:{rname}" if len(names) > 1 else p["name"], render(p, (H, W), region=rname)))
-        fits = {rn: _fit_strength_ink(obs, B, cov) for rn, cov in regions}
+                regions.append((f"{p['name']}:{rname}" if len(names) > 1 else p["name"], p, rname,
+                                render(p, (H, W), region=rname)))
+        fits = {rn: _fit_strength_ink(obs, B, cov) for rn, p, rname, cov in regions}
         own = [f for f in fits.values() if f is not None]
-        region_info = {}
-        for rn, cov in regions:
+
+        def _resolved(rn):
             f = fits[rn] or (own[0] if own else (DEFAULT_STRENGTH, np.full(3, INK_LUM_PRIOR, np.float32), 0.0))
-            o, ink = f[0], f[1]
+            return f[0], f[1]
+
+        # Edge profile (step 4b): fit per region in its own window, first
+        # pass only for regions with enough edge pixels of their own.
+        profiles = {}
+        windows = {}
+        if EDGE_PROFILE:
+            for rn, p, rname, cov in regions:
+                o, ink = _resolved(rn)
+                x0, y0, w, h = _parts_bbox([p], (H, W), margin=EDGE_WINDOW_MARGIN)
+                windows[rn] = (x0, y0, w, h)
+                d_w = _signed_distance(p, rname, x0, y0, w, h)
+                obs_w = obs[y0:y0 + h, x0:x0 + w]
+                B_w = B[y0:y0 + h, x0:x0 + w]
+                cov_w = cov[y0:y0 + h, x0:x0 + w]
+                profiles[rn] = dict(_fit_edge_profile_region(d_w, obs_w, B_w, ink, o, cov_w, p.get("sigma", 0.0)),
+                                    d_w=d_w, obs_w=obs_w, B_w=B_w, cov_w=cov_w)
+            # Second pass: regions with too few edge pixels of their own
+            # borrow an accepted sibling's curve, evaluated on their OWN
+            # distance map, and are safety-checked the same way before use.
+            donors = [rn for rn, pr in profiles.items() if pr["status"] == "ok" and pr["accept"]]
+            for rn, pr in profiles.items():
+                if pr["status"] != "insufficient" or not donors:
+                    continue
+                o, ink = _resolved(rn)
+                donor = profiles[donors[0]]
+                d_w, obs_w, B_w, cov_w = pr["d_w"], pr["obs_w"], pr["B_w"], pr["cov_w"]
+                Phi = _pl_basis(d_w.ravel().astype(np.float32), donor["knots"])[:, 1:]
+                alpha_win = (Phi.astype(np.float64) @ donor["P_free"]).reshape(d_w.shape)
+                alpha_win = np.clip(np.where(d_w > -D_OUT, alpha_win, 0.0), 0, MAX_ALPHA).astype(np.float32)
+                # Acceptance over the FULL window, same as _fit_edge_profile_region.
+                d_full = d_w.ravel().astype(np.float32)
+                obs_full = obs_w.reshape(-1, 3).astype(np.float64)
+                B_full = B_w.reshape(-1, 3).astype(np.float64)
+                res_lum_new = _recon_lum_residual(obs_full, B_full, alpha_win.ravel(), ink)
+                res_lum_old = _recon_lum_residual(obs_full, B_full, o * cov_w.ravel(), ink)
+                mask_cmp = (np.abs(res_lum_new) <= CONTENT_CUT_LUM) & (np.abs(res_lum_old) <= CONTENT_CUT_LUM)
+                res_new = _binned_bias_rms(d_full[mask_cmp], res_lum_new[mask_cmp])
+                res_old = _binned_bias_rms(d_full[mask_cmp], res_lum_old[mask_cmp])
+                accept = res_old > 1e-9 and res_new <= res_old * (1.0 - ACCEPT_MARGIN)
+                profiles[rn] = dict(pr, status="ok", knots=donor["knots"], P_free=donor["P_free"],
+                                    alpha_win=alpha_win, residual_before=res_old, residual_after=res_new,
+                                    accept=accept, borrowed=True)
+
+            # Final per-MARK safety net. Each region's own accept test only
+            # guarantees ITS OWN binned residual improved; pooled together
+            # with an unrelated sibling region's edges (e.g. the stacked
+            # mark's logo + subtitle), two independently-improving curves
+            # can still average to something worse at a shared d bin (the
+            # same Simpson's-paradox trap `scripts/alpha_net/
+            # eval_stamp_rim.py` pools raw samples, not curves, to avoid).
+            # So verify the mark's regions' decisions TOGETHER do not raise
+            # the pooled residual above today's-model baseline; if they do,
+            # revert every region of this mark to today's model.
+            pooled_d, pooled_old, pooled_new = [], [], []
+            for rn, p, rname, cov in regions:
+                pr = profiles.get(rn)
+                if not (pr and pr["status"] == "ok"):
+                    continue
+                o, ink = _resolved(rn)
+                d_w, obs_w, B_w, cov_w = pr["d_w"], pr["obs_w"], pr["B_w"], pr["cov_w"]
+                d_full = d_w.ravel().astype(np.float32)
+                obs_full = obs_w.reshape(-1, 3).astype(np.float64)
+                B_full = B_w.reshape(-1, 3).astype(np.float64)
+                res_old_v = _recon_lum_residual(obs_full, B_full, o * cov_w.ravel(), ink)
+                res_new_v = _recon_lum_residual(obs_full, B_full, pr["alpha_win"].ravel(), ink) \
+                    if pr["accept"] else res_old_v
+                keep = (np.abs(res_old_v) <= CONTENT_CUT_LUM) & (np.abs(res_new_v) <= CONTENT_CUT_LUM)
+                pooled_d.append(d_full[keep])
+                pooled_old.append(res_old_v[keep])
+                pooled_new.append(res_new_v[keep])
+            if pooled_d:
+                pd, po, pn = np.concatenate(pooled_d), np.concatenate(pooled_old), np.concatenate(pooled_new)
+                if _binned_bias_rms(pd, pn) > _binned_bias_rms(pd, po):
+                    for rn in profiles:
+                        if profiles[rn]["status"] == "ok" and profiles[rn]["accept"]:
+                            profiles[rn] = dict(profiles[rn], accept=False, mark_reverted=True)
+
+        region_info = {}
+        for rn, p, rname, cov in regions:
+            o, ink = _resolved(rn)
             a = np.clip(o * cov, 0, MAX_ALPHA)
+            pr = profiles.get(rn)
+            used = bool(pr and pr["status"] == "ok" and pr["accept"])
+            if used:
+                x0, y0, w, h = windows[rn]
+                a = a.copy()
+                a[y0:y0 + h, x0:x0 + w] = pr["alpha_win"]
             sel = a > A
             A = np.where(sel, a, A)
             INK[sel] = ink
             region_info[rn] = dict(strength=round(o, 3), ink=[int(v) for v in np.round(ink * 255)],
-                                   source="own" if fits[rn] else ("borrowed" if own else "default"))
+                                   source="own" if fits[rn] else ("borrowed" if own else "default"),
+                                   edge_profile=_profile_info(pr, used) if EDGE_PROFILE else
+                                   dict(used=False, reason="off", knots_d=[], knots_a=[],
+                                        residual_before=None, residual_after=None))
         mk["parts"] = parts
         infos.append(dict(kind=mk["kind"], parts=[{k: (round(v, 3) if isinstance(v, float) else v) for k, v in p.items()} for p in parts],
                           regions=region_info, background=bg_name, iou=mk.get("iou"), change=mk.get("change"),

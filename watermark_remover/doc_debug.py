@@ -320,6 +320,17 @@ def _render_stamp_fit_report(lines: list, instances: list, per_box_info: list, p
                                 for k, v in m["regions"].items())
             lines.append(f"| {i} | {m['kind']} | {parts} | {m['iou']} | {m['change']} / {m['control']} | "
                          f"{m.get('background', '')} | {regions} |")
+        ep_lines = []
+        for i, m in enumerate(sf["marks"], 1):
+            for k, v in m["regions"].items():
+                ep = v.get("edge_profile")
+                if not ep:
+                    continue
+                detail = (f"{ep['reason']}, residual {ep['residual_before']} -> {ep['residual_after']}"
+                          if ep.get("residual_before") is not None else ep["reason"])
+                ep_lines.append(f"- mark {i} `{k}`: edge profile {'used' if ep['used'] else 'not used'} ({detail})")
+        if ep_lines:
+            lines += [""] + ep_lines
     else:
         lines.append("No AriaTender stamp was accepted on this page.")
     if sf["rejected"]:
