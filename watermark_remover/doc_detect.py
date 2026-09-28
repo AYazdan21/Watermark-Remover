@@ -158,6 +158,7 @@ ALPHA_NET_INK_GUARD = True
 # (v2) / 16.7 (v3 as first shipped), false opacity off the mark 2.5% vs ~5%;
 # improved on both held-out pages. The older checkpoints remain as fallbacks.
 _ALPHA_NET_CANDIDATES = [
+    os.path.join(BASE_DIR, "weights", "alpha_net_v2_best_final.pt"),
     os.path.join(BASE_DIR, "weights", "alpha_net_v4_realft.pt"),
     os.path.join(BASE_DIR, "weights", "alpha_net_best_final.pt"),
     os.path.join(BASE_DIR, "weights", "alpha_net_best.pt"),
@@ -169,9 +170,9 @@ ALPHA_NET_WEIGHTS = next((p for p in _ALPHA_NET_CANDIDATES if os.path.exists(p))
 # then v2 (96-101% of ground-truth opacity on synthetic data vs v1's 63-79%);
 # only after that the older app checkpoints.
 _STAMP_FIT_LOCATOR_CANDIDATES = [
-    os.path.join(BASE_DIR, "weights", "alpha_net_v4_realft.pt"),
     os.path.join(BASE_DIR, "weights", "alpha_net_v2_best_final.pt"),
-] + _ALPHA_NET_CANDIDATES[1:]
+    os.path.join(BASE_DIR, "weights", "alpha_net_v4_realft.pt"),
+] + _ALPHA_NET_CANDIDATES[2:]
 
 
 def stamp_fit_locator_weights():
