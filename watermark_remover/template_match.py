@@ -470,11 +470,13 @@ def fit_page_registration(img_np: np.ndarray, accepted_instances: list, template
     their union, so the "large" probe there should (and does, by the same
     logic) score worse than the correct "small" probe.
 
-    Returns {"available": False} if there are no accepted instances or the
-    templates failed to load; otherwise {"available": True, "mark_id",
-    "scale", "angle_deg", "score", "regime" ("small" or "large"),
-    "candidate_scores"} (the last two purely for the verification report
-    -- not consumed by register_instance).
+    Returns {"available": False} if there are no accepted instances, the
+    templates failed to load, or every (mark, scale, angle) hypothesis was
+    rejected by _hypothesis_score for every candidate mark (e.g. the page's
+    accepted instances are all too small to fit any template against);
+    otherwise {"available": True, "mark_id", "scale", "angle_deg", "score",
+    "regime" ("small" or "large"), "candidate_scores"} (the last two purely
+    for the verification report -- not consumed by register_instance).
     """
     if templates is None:
         templates = _load_templates()
@@ -529,6 +531,16 @@ def fit_page_registration(img_np: np.ndarray, accepted_instances: list, template
         candidate_scores[mark_id] = {"small_avg": avg_small, "large_avg": avg_large}
         if avg > best_avg:
             best_mark_id, best_avg, best_scale, best_angle, best_regime = mark_id, avg, scale, angle, regime
+
+    if best_mark_id is None:
+        # Every hypothesis for every candidate mark was rejected by
+        # _hypothesis_score (warped template under _MIN_WARPED_TEMPLATE_DIM,
+        # or scale <= 0.01) -- e.g. the page's accepted instances are all too
+        # small to fit any template against. best_scale/best_angle are still
+        # None here; returning an "available" result would hand
+        # register_instance a None scale and crash in _warp_template. There
+        # is no usable page registration, so report that instead.
+        return {"available": False, "candidate_scores": candidate_scores}
 
     result = {
         "available": True,
