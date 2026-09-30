@@ -398,6 +398,10 @@ def clean_document_segment(
         do_template = (removal_strategy == STRATEGY_TEMPLATE)
         if do_template:
             template_page_reg = template_match.fit_page_registration(img_np, accepted_instances)
+            # Every instance's own img_luma is the same full-page value --
+            # computed once here instead of once per instance inside
+            # register_instance (see that function's page_luma parameter).
+            page_luma = template_match._luma(img_np.astype(np.float64))
 
         for inst in accepted_instances:
             full_mask_bool = (inst["mask"] > 0) & (~handled)
@@ -407,7 +411,9 @@ def clean_document_segment(
 
             used_template = False
             if do_template and not is_bright_mark:
-                corrected_t, treg_info = template_match.register_instance(img_np, inst, template_page_reg, full_mask_bool)
+                corrected_t, treg_info = template_match.register_instance(
+                    img_np, inst, template_page_reg, full_mask_bool, page_luma=page_luma
+                )
                 instance_registrations.append({"box": inst["box"], "conf": inst["conf"], **treg_info})
                 if corrected_t is not None:
                     cleaned[full_mask_bool] = corrected_t

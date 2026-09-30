@@ -340,6 +340,25 @@ _RING_PX = 20
 _MIN_RING_PIXELS = 30
 
 
+def _bbox_window(mask: np.ndarray, h: int, w: int, margin: int):
+    """Bounding box of `mask`'s nonzero pixels, expanded by `margin` on
+    every side and clipped to (h, w). Shared by local_ring_background and
+    _classify_instance so both crop the SAME window from a given instance
+    mask -- see local_ring_background's comment for why a margin of
+    ring_px + 2 is guaranteed to contain every pixel either function reads.
+    Degrades gracefully (a small window near the origin, not a crash) for
+    an all-zero mask -- cv2.boundingRect returns (0, 0, 0, 0) there, and
+    every pixel in that window is background (mask_crop all False), which
+    is exactly what the callers' own empty-mask handling expects.
+    """
+    x, y, bw, bh = cv2.boundingRect(mask)
+    x0 = max(0, x - margin)
+    y0 = max(0, y - margin)
+    x1 = min(w, x + bw + margin)
+    y1 = min(h, y + bh + margin)
+    return x0, y0, x1, y1
+
+
 def local_ring_background(img_np: np.ndarray, inst_mask: np.ndarray, ring_px: int = _RING_PX) -> np.ndarray:
     """Estimates the background immediately behind one instance from a ring
     of pixels around it: dilate the mask, subtract the mask itself, take the
@@ -349,19 +368,35 @@ def local_ring_background(img_np: np.ndarray, inst_mask: np.ndarray, ring_px: in
     instance is small enough that its own immediate surroundings are a safe,
     locally-uniform stand-in for "what's behind it", without assuming
     anything about the rest of the page.
+
+    Computed on a crop, not the whole page: a cv2.dilate with a (ring_px*2+1)
+    kernel reaches exactly ring_px pixels out from the mask, so a window
+    expanded by ring_px + 2 around the mask's bounding box contains every
+    ring pixel the full-page version would have found -- the result is
+    identical, just cheaper on a page with many small instances.
     """
     h, w = inst_mask.shape[:2]
+    x0, y0, x1, y1 = _bbox_window(inst_mask, h, w, ring_px + 2)
+    mask_crop = inst_mask[y0:y1, x0:x1]
+    img_crop = img_np[y0:y1, x0:x1]
+
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ring_px * 2 + 1, ring_px * 2 + 1))
-    dilated = cv2.dilate(inst_mask, k)
-    ring = (dilated > 0) & (inst_mask == 0)
+    dilated = cv2.dilate(mask_crop, k)
+    ring = (dilated > 0) & (mask_crop == 0)
     if int(np.sum(ring)) < _MIN_RING_PIXELS:
         # Instance fills (almost) its whole neighborhood (e.g. touches the
         # page edge) -- fall back to inpainting from whatever border exists.
+        # Rare, and the fallback is a full-page op already; left untouched.
         return cv2.inpaint(img_np, inst_mask, ring_px, cv2.INPAINT_TELEA)
-    ring_color = np.median(img_np[ring].reshape(-1, 3), axis=0)
-    bg = img_np.astype(np.float64).copy()
-    bg[inst_mask > 0] = ring_color
-    return np.clip(bg, 0, 255).astype(np.uint8)
+    ring_color = np.median(img_crop[ring].reshape(-1, 3), axis=0)
+    # Same clip + truncate as before, just applied to the ring color once
+    # instead of to a full-page float64 copy: unmasked pixels are already
+    # untouched uint8 values, and masked pixels get the identical
+    # clip(...).astype(uint8) conversion either way.
+    ring_u8 = np.clip(ring_color, 0, 255).astype(np.uint8)
+    bg = img_np.copy()
+    bg[inst_mask > 0] = ring_u8
+    return bg
 
 
 # Two independent false-positive signals, both measured on the instance's
@@ -609,6 +644,7 @@ def _classify_instance(
     opaque_reject_alpha: float = _OPAQUE_REJECT_ALPHA,
     allow_colored_bg: bool = False,
     max_instance_coverage: float = _MAX_INSTANCE_COVERAGE,
+    page_ctx: dict = None,
 ):
     """Computes all false-positive-filter signals for one instance.
     Returns a dict with median_ink_alpha, bg_saturation, page_coverage,
@@ -626,6 +662,13 @@ def _classify_instance(
     calibration) so every existing caller is unaffected; the direct-mask
     path passes _SEG_MAX_INSTANCE_COVERAGE instead -- see that constant's
     comment for why the two models need different caps.
+
+    `page_ctx`: optional dict of page-level values that are otherwise
+    identical for every instance on the page (gray_u8, gray_full, otsu_val,
+    is_dark_ink_bool) -- see detect_watermark_masks, which computes this
+    ONCE per page and passes it in so an N-instance page doesn't redo the
+    same full-page cvtColor/Otsu N times. When None (any caller other than
+    detect_watermark_masks), these are computed here exactly as before.
 
     IMPORTANT split (Defect 1 fix): this function returns TWO different
     colors, and they must stay different.
@@ -665,27 +708,51 @@ def _classify_instance(
             "removal_color_non_ink_pixels": 0,
         }
 
-    bg_est = local_ring_background(img_np, inst_mask)
-    gray_u8 = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-    gray_full = gray_u8.astype(np.float64)
-    bg_gray = cv2.cvtColor(bg_est, cv2.COLOR_RGB2GRAY).astype(np.float64)
-    residual = np.abs(gray_full - bg_gray)
+    bg_est = local_ring_background(img_np, inst_mask)  # full-size -- doc_segment.py and template_match consume it as-is
 
-    ink_bool = _ink_subset(residual, mask_bool)
-    mark_color = estimate_mark_color(img_np, inst_mask, residual)
-    result = unmix_region(img_np, inst_mask, mark_color=mark_color, background=bg_est)
+    if page_ctx is not None:
+        gray_u8 = page_ctx["gray_u8"]
+        gray_full = page_ctx["gray_full"]
+        otsu_val = page_ctx["otsu_val"]
+        is_dark_ink_bool = page_ctx["is_dark_ink_bool"]
+    else:
+        gray_u8 = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        gray_full = gray_u8.astype(np.float64)
+        otsu_val, _ = cv2.threshold(gray_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        is_dark_ink_bool = gray_full < (float(otsu_val) - 15.0)
 
-    alpha_ink = result.alpha[ink_bool]
+    # Everything below is only ever read at this instance's own mask pixels
+    # (mark_color/ink_bool/alpha/removal color all restrict to mask_bool or
+    # a subset of it, and bg_saturation restricts to mask_bool too) -- so,
+    # same as local_ring_background, it's computed on a window expanded
+    # ring_px + 2 around the mask's bounding box (a strict superset of the
+    # mask itself) instead of the whole page. cvtColor/abs-diff are all
+    # per-pixel, so cropping first is byte-identical to cropping the
+    # full-page result afterward.
+    x0, y0, x1, y1 = _bbox_window(inst_mask, h, w, _RING_PX + 2)
+    img_c = img_np[y0:y1, x0:x1]
+    mask_c = inst_mask[y0:y1, x0:x1]
+    mask_bool_c = mask_c > 0
+    bg_c = bg_est[y0:y1, x0:x1]
+    gray_full_c = gray_full[y0:y1, x0:x1]
+    is_dark_c = is_dark_ink_bool[y0:y1, x0:x1]
+
+    bg_gray_c = cv2.cvtColor(bg_c, cv2.COLOR_RGB2GRAY).astype(np.float64)
+    residual_c = np.abs(gray_full_c - bg_gray_c)
+
+    ink_bool_c = _ink_subset(residual_c, mask_bool_c)
+    mark_color = estimate_mark_color(img_c, mask_c, residual_c)
+    result = unmix_region(img_c, mask_c, mark_color=mark_color, background=bg_c)
+
+    alpha_ink = result.alpha[ink_bool_c]
     median_ink_alpha = float(np.median(alpha_ink)) if alpha_ink.size else 0.0
 
-    otsu_val, _ = cv2.threshold(gray_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    is_dark_ink_bool = gray_full < (float(otsu_val) - 15.0)
     removal_mark_color, removal_color_fallback, non_ink_count = _estimate_removal_mark_color(
-        img_np, mask_bool, residual, is_dark_ink_bool
+        img_c, mask_bool_c, residual_c, is_dark_c
     )
 
-    bg_hsv = cv2.cvtColor(bg_est, cv2.COLOR_RGB2HSV)
-    bg_saturation = float(np.median(bg_hsv[:, :, 1][mask_bool])) if np.any(mask_bool) else 0.0
+    bg_hsv_c = cv2.cvtColor(bg_c, cv2.COLOR_RGB2HSV)
+    bg_saturation = float(np.median(bg_hsv_c[:, :, 1][mask_bool_c])) if np.any(mask_bool_c) else 0.0
 
     reject_reason = None
     if median_ink_alpha >= opaque_reject_alpha:
@@ -786,6 +853,20 @@ def detect_watermark_masks(
     # else: masks/used_sam/sam_error/refine_ms already set above by the
     # direct-mask branch -- nothing left to refine.
 
+    # Page-level values _classify_instance needs are the same for every
+    # instance on the page (full-page grayscale + Otsu threshold) -- computed
+    # ONCE here instead of once per instance (see _classify_instance's
+    # page_ctx parameter).
+    gray_u8 = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    gray_full = gray_u8.astype(np.float64)
+    otsu_val, _ = cv2.threshold(gray_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    page_ctx = {
+        "gray_u8": gray_u8,
+        "gray_full": gray_full,
+        "otsu_val": otsu_val,
+        "is_dark_ink_bool": gray_full < (float(otsu_val) - 15.0),
+    }
+
     instances = []
     for box, conf_i, src, inst_mask in zip(boxes, scores, sources, masks):
         if not np.any(inst_mask > 0):
@@ -804,6 +885,7 @@ def detect_watermark_masks(
             opaque_reject_alpha=opaque_reject_alpha,
             allow_colored_bg=allow_colored_bg,
             max_instance_coverage=max_instance_coverage,
+            page_ctx=page_ctx,
         )
         instances.append({
             "box": tuple(float(v) for v in box), "conf": float(conf_i), "source": src,

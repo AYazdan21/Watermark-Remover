@@ -56,6 +56,7 @@ template's alpha is only known up to the eventual opacity fit (see
 those with genuine misregistration.
 """
 
+import concurrent.futures
 import math
 import os
 import sys
@@ -226,6 +227,16 @@ _MIN_OPACITY_FIT_PIXELS = 20
 # shield fragment alone warps to ~139px tall at the true page scale).
 _MIN_WARPED_TEMPLATE_DIM = 40
 
+# Thread count for scoring independent (scale, angle) hypotheses in
+# _fit_scale_angle_for_mark's coarse/fine grids (see that function). Not
+# tied to cv2.getNumThreads() -- measured directly (see the M3 speed
+# refactor notes): this module's own registration path runs with OpenCV
+# left single-threaded by torch/ultralytics, so 4 python threads each
+# making their own cv2.matchTemplate/warpAffine calls (which release the
+# GIL) give a real ~46-48% wall-time reduction on real pages, not just
+# oversubscription of an already-parallel C++ call.
+_REGISTRATION_THREADS = 4
+
 
 def _luma(img_float: np.ndarray) -> np.ndarray:
     return img_float @ _LUMA_WEIGHTS
@@ -394,6 +405,26 @@ def _hypothesis_score(top_k, ink: np.ndarray, alpha: np.ndarray, scale: float, a
     return total, per_instance
 
 
+def _score_hypotheses_ordered(top_k, ink: np.ndarray, alpha: np.ndarray, hyps: list):
+    """Scores every (scale, angle) in `hyps` -- each one an independent
+    _hypothesis_score call -- on a small thread pool, and returns the
+    (total, per_instance) results in the SAME order as `hyps` (not
+    completion order: concurrent.futures.Executor.map yields results in
+    the order its inputs were given). Each hypothesis's own cv2.matchTemplate
+    / cv2.warpAffine calls release the GIL, and this module's registration
+    path runs with OpenCV left single-threaded by torch/ultralytics (see
+    _REGISTRATION_THREADS), so this is real parallelism, not oversubscription
+    of an already-threaded C++ call. No RNG is involved anywhere in
+    registration (unlike doc_segment's per-page cv2.kmeans calls, which must
+    never be threaded -- see that module's docstring), so scoring
+    independent hypotheses out of order is safe; the caller then reduces
+    the ordered results with the exact same sequential comparison the
+    serial loop used, so the winner -- ties included -- is unaffected.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_REGISTRATION_THREADS) as ex:
+        return list(ex.map(lambda sa: _hypothesis_score(top_k, ink, alpha, sa[0], sa[1]), hyps))
+
+
 def _fit_scale_angle_for_mark(top_k, ink: np.ndarray, alpha: np.ndarray, scale_seeds):
     """Coarse-to-fine (scale, angle) search for ONE template, maximising
     `_hypothesis_score`'s SUMMED score across `top_k` (see the module-level
@@ -401,23 +432,28 @@ def _fit_scale_angle_for_mark(top_k, ink: np.ndarray, alpha: np.ndarray, scale_s
     (best_total_score, best_scale, best_angle_deg).
     """
     best_total, best_scale, best_angle = -1.0, scale_seeds[0], 0.0
-    for seed_scale in scale_seeds:
-        for factor in _SCALE_FACTORS_COARSE:
-            for angle in _ANGLE_COARSE_DEG:
-                total, _ = _hypothesis_score(top_k, ink, alpha, seed_scale * factor, float(angle))
-                if total > best_total:
-                    best_total, best_scale, best_angle = total, seed_scale * factor, float(angle)
+
+    coarse_hyps = [
+        (seed_scale * factor, float(angle))
+        for seed_scale in scale_seeds
+        for factor in _SCALE_FACTORS_COARSE
+        for angle in _ANGLE_COARSE_DEG
+    ]
+    coarse_results = _score_hypotheses_ordered(top_k, ink, alpha, coarse_hyps)
+    for (scale, angle), (total, _) in zip(coarse_hyps, coarse_results):
+        if total > best_total:
+            best_total, best_scale, best_angle = total, scale, angle
 
     fine_scale_lo = best_scale * (1.0 - _SCALE_FACTOR_FINE_SPAN)
     fine_scale_hi = best_scale * (1.0 + _SCALE_FACTOR_FINE_SPAN)
     fine_scales = np.arange(fine_scale_lo, fine_scale_hi + 1e-9, best_scale * _SCALE_FACTOR_FINE_STEP)
     fine_angles = np.arange(best_angle - _ANGLE_FINE_SPAN_DEG, best_angle + _ANGLE_FINE_SPAN_DEG + 1e-9,
                              _ANGLE_FINE_STEP_DEG)
-    for scale in fine_scales:
-        for angle in fine_angles:
-            total, _ = _hypothesis_score(top_k, ink, alpha, float(scale), float(angle))
-            if total > best_total:
-                best_total, best_scale, best_angle = total, float(scale), float(angle)
+    fine_hyps = [(float(scale), float(angle)) for scale in fine_scales for angle in fine_angles]
+    fine_results = _score_hypotheses_ordered(top_k, ink, alpha, fine_hyps)
+    for (scale, angle), (total, _) in zip(fine_hyps, fine_results):
+        if total > best_total:
+            best_total, best_scale, best_angle = total, scale, angle
 
     return best_total, best_scale, best_angle
 
@@ -608,7 +644,7 @@ def _fit_opacity(bg_luma_px: np.ndarray, obs_luma_px: np.ndarray,
 
 
 def register_instance(img_np: np.ndarray, inst: dict, page_reg: dict, mask_bool: np.ndarray,
-                       templates: dict = None):
+                       templates: dict = None, page_luma: np.ndarray = None):
     """Registers one accepted instance against the page-level (scale,
     angle) already fixed by `fit_page_registration`.
 
@@ -647,6 +683,18 @@ def register_instance(img_np: np.ndarray, inst: dict, page_reg: dict, mask_bool:
     `info` always carries at least {"attempted": bool, "fell_back": bool,
     "score": float}; on success it adds {"mark_id", "scale", "angle_deg",
     "k", "alpha_mean"}.
+
+    `page_luma`: optional pre-computed `_luma(img_np.astype(np.float64))`
+    for the WHOLE page, from doc_segment.py (computed once per page rather
+    than once per instance -- every instance's img_luma is identical
+    anyway). When given, it's also reused to build bg_luma cheaply: bg
+    differs from img_np only at the pixels local_ring_background actually
+    replaced, and _luma is a per-pixel dot product with no cross-pixel
+    dependency, so `page_luma`'s value at every OTHER pixel already equals
+    `_luma(bg)` there -- confirmed bit-identical against recomputing
+    `_luma(bg)` over the whole array on every accepted instance of every
+    test page (see the M3 speed-refactor verification notes). When
+    `page_luma` is None, img_luma/bg_luma are computed exactly as before.
     """
     if templates is None:
         templates = _load_templates()
@@ -660,8 +708,16 @@ def register_instance(img_np: np.ndarray, inst: dict, page_reg: dict, mask_bool:
     bg = inst.get("background")
     img_f = img_np.astype(np.float64)
     bg_f = bg.astype(np.float64) if bg is not None else img_f
-    img_luma = _luma(img_f)
-    bg_luma = _luma(bg_f)
+    img_luma = page_luma if page_luma is not None else _luma(img_f)
+    if bg is None:
+        bg_luma = img_luma
+    elif page_luma is not None:
+        diff = np.any(bg != img_np, axis=2)
+        bg_luma = page_luma.copy()
+        if np.any(diff):
+            bg_luma[diff] = _luma(bg[diff].astype(np.float64))
+    else:
+        bg_luma = _luma(bg_f)
 
     scale, angle = page_reg["scale"], page_reg["angle_deg"]
 
