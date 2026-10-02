@@ -12,6 +12,7 @@ from .photo_inpainter import (
 )
 from .router import DOCUMENT_LABEL, PHOTO_LABEL, auto_remove_watermark, detect_mode
 from .storage import manual_save_triple
+from .template_ui import build_template_tabs
 
 custom_css = """
 .gradio-container {
@@ -31,6 +32,7 @@ def build_ui():
             control? The tools it dispatches to are still available on their own tabs:
             - **📄 1-Click Document Cleaner (No Mask)**: For scanned documents, notices, PDF pages, contracts. Removes semi-transparent watermarks with **1 click in 3ms** while preserving 100% of the underlying text.
             - **🎨 Photo Inpainter (LaMa + Brush)**: For natural photos, scenery, people, or solid opaque watermarks/objects.
+            - **🧩 Template Stamp Fit (M5)** and **🛠️ Template Builder**: Build a template for any watermark a site stamps on every page from a folder of its pages, then remove it with no trained model.
             """
         )
 
@@ -490,6 +492,9 @@ def build_ui():
                 ],
                 outputs=[m4_debug_output, m4_debug_report],
             )
+
+        # Method 5 (Template Stamp Fit) and the Template Builder
+        build_template_tabs()
 
         # ==========================================
         # TAB 2: Photo Inpainter (LaMa + YOLO11)
