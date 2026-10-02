@@ -1,0 +1,5 @@
+# Built templates are local artefacts of the Template Builder; only this
+# README and this file are tracked.
+*
+!README.md
+!.gitignore
