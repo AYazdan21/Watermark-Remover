@@ -356,7 +356,7 @@ def _overlay(path, alpha, pose, out_path):
     if x1 - x0 < 8 or y1 - y0 < 8:
         return False
     cov = ts.render_template(alpha, pose["scale"], pose["x"], pose["y"], (x0, y0, x1 - x0, y1 - y0))
-    crop = np.ascontiguousarray(img[y0:y1, x0:x1])
+    crop = np.array(img[y0:y1, x0:x1])          # a copy: read_rgb returns a read-only array, which a full-width crop would stay
     cnts, _ = cv2.findContours((cov >= 0.5).astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(crop, cnts, -1, (255, 0, 0), max(1, int(round(0.004 * max(crop.shape[:2])))))
     f = min(1.0, 1100.0 / max(crop.shape[:2]))
@@ -468,6 +468,7 @@ def build_template(pages_dir, seed_page, seed_box=None, seed_mask=None, name=Non
     if seed_box is None or len(seed_box) != 4 or seed_box[2] < 20 or seed_box[3] < 10:
         return fail("no usable seed box (mark the watermark on the seed page)")
     x, y, w, h = [float(v) for v in seed_box]
+    seed_box_input = [int(round(v)) for v in (x, y, w, h)]      # as given, before the 5% padding (what a rebuild needs)
     px_, py_ = 0.05 * w, 0.05 * h
     x0, y0 = max(0, int(np.floor(x - px_))), max(0, int(np.floor(y - py_)))
     x1, y1 = min(SW, int(np.ceil(x + w + px_))), min(SH, int(np.ceil(y + h + py_)))
@@ -612,7 +613,7 @@ def build_template(pages_dir, seed_page, seed_box=None, seed_mask=None, name=Non
     elapsed = time.time() - t_start
     stat = lambda v: dict(median=float(np.median(v)), min=float(np.min(v)), max=float(np.max(v)))
     meta = dict(name=name, builder_version=BUILDER_VERSION, source_folder=pages_dir_r,
-                seed_page=os.path.basename(seed_p), seed_box=[int(v) for v in box],
+                seed_page=os.path.basename(seed_p), seed_box=[int(v) for v in box], seed_box_input=seed_box_input,
                 n_pages_used=len(acc_rows), n_pages_rejected=int(nrej), template_size=[int(Tw), int(Th)],
                 rel_width=stat(rel), instance_width_px=stat(widths), strength=stat(stren),
                 opacity_peak=float(a_peak), ink_luminance=float(L_ink), ink_luminance_source=final["cal"]["source"],

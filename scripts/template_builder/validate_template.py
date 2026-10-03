@@ -3,7 +3,7 @@
 Run from the repo root with the project venv:
     .venv/Scripts/python.exe scripts/template_builder/validate_template.py \
         --template mysite --pages path/to/pages [--out DIR] \
-        [--reference assets/stamps/ariatender_wide.png] [--clean-dir DIR] [--removal pixel|region]
+        [--reference assets/stamps/ariatender_wide.png] [--clean-dir DIR] [--removal adaptive|pixel|region]
 
 Runs Method 5 with only this template on every page, writes
 <stem>_cleaned.png / _overlay.png / _diff.png plus summary.csv / summary.json
@@ -31,8 +31,8 @@ def main():
     ap.add_argument("--max-pages", type=int, default=100)
     ap.add_argument("--min-score", type=float, default=0.30)
     ap.add_argument("--library", default=None)
-    ap.add_argument("--removal", choices=["pixel", "region"], default="pixel",
-                    help="pixel = per-pixel colour model (default); region = Stamp Fit's per-region fit")
+    ap.add_argument("--removal", choices=["adaptive", "pixel", "region"], default="adaptive",
+                    help="adaptive = page-adaptive model (default); pixel = per-pixel colour model (v2); region = Stamp Fit's per-region fit")
     a = ap.parse_args()
 
     def progress(frac, desc=""):

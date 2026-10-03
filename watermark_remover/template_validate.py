@@ -7,8 +7,8 @@ Three independent checks, all model-free:
    template) sit on the built template, and how well do the two coverage maps
    agree (Pearson correlation, soft / binary IoU, mean |delta|)?
 2. **Removal over the folder**: Method 5 with only this template on every page,
-   with the chosen removal model (``removal="pixel"``: per-pixel colour, the
-   default; ``"region"``: Stamp Fit's per-region fit).
+   with the chosen removal model (``removal="adaptive"``: page-adaptive, the
+   default; ``"pixel"``: per-pixel colour (v2); ``"region"``: Stamp Fit's per-region fit).
    ``change_before`` is the leftover mark contrast along the strokes
    (``stamp_fit._colour_change``) on the page, ``change_after`` the same on the
    cleaned page at the same fitted parts -- no ground truth needed.
@@ -35,7 +35,7 @@ from . import template_library as tl
 from . import template_signal as ts
 from .config import BASE_DIR
 from .template_builder import list_pages, read_rgb
-from .template_stamp_fit import clean_document_template, footprint_overlay
+from .template_stamp_fit import REMOVAL_NAMES, clean_document_template, footprint_overlay
 
 CSV_FIELDS = ["file", "accepted", "score", "x", "y", "scale", "width_px", "change_before", "change_after",
               "control", "changed_fraction", "strengths", "inks", "changed_px", "time_s"]
@@ -125,7 +125,7 @@ def _err(a, b, mask=None):
 # ---------------------------------------------------------------------------
 
 def validate_template(template, pages_dir, out_dir=None, reference=None, clean_dir=None, max_pages=100,
-                      min_score=0.30, progress=None, library_dir=None, removal="pixel"):
+                      min_score=0.30, progress=None, library_dir=None, removal="adaptive"):
     """Runs the three checks; returns dict(ok, message, summary, rows, out_dir, csv,
     gallery (list of image paths, overlay/cleaned pairs), reference_image)."""
     prog = (lambda f, msg="": progress(f, desc=msg)) if progress else (lambda f, msg="": None)
@@ -251,7 +251,7 @@ def validate_template(template, pages_dir, out_dir=None, reference=None, clean_d
 def _markdown(s, rows):
     L = [f"### Validation of `{s['template']}` on {s['n_pages']} page(s)",
          f"- accepted **{s['n_accepted']}**, rejected **{s['n_rejected']}** (min score {s['min_score']:.2f}, "
-         f"{'per-pixel colour' if s.get('removal', 'pixel') == 'pixel' else 'per-region (Stamp Fit)'} removal)"]
+         f"{REMOVAL_NAMES.get(s.get('removal', 'adaptive'), s.get('removal'))} removal)"]
     if s.get("median_change_before") is not None:
         L.append(f"- leftover mark contrast along the strokes (median, grey levels): "
                  f"**{s['median_change_before']:.1f} -> {s['median_change_after']:.1f}**")

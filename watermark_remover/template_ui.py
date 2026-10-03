@@ -6,6 +6,7 @@ exceptions and shows them in the markdown output instead of crashing the app.
 Nothing here writes into ``dataset/``.
 """
 
+import json
 import os
 import traceback
 
@@ -21,7 +22,7 @@ from .template_validate import validate_template
 
 ALL_LABEL = "All library templates"
 DEFAULT_LIB = os.path.join("assets", "stamps", "library")
-REMOVAL_CHOICES = [("Per-pixel colour (v2)", "pixel"), ("Per-region (Stamp Fit)", "region")]
+REMOVAL_CHOICES = [("Page-adaptive (v3)", "adaptive"), ("Per-pixel colour (v2)", "pixel"), ("Per-region (Stamp Fit)", "region")]
 
 
 def _err(e):
@@ -60,7 +61,7 @@ def m5_refresh(library_dir, current):
     return gr.update(choices=ch, value=keep)
 
 
-def m5_clean(image, templates, library_dir, min_score, removal="pixel"):
+def m5_clean(image, templates, library_dir, min_score, removal="adaptive"):
     if image is None:
         return None, None, "Upload an image first."
     if not templates:
@@ -68,7 +69,7 @@ def m5_clean(image, templates, library_dir, min_score, removal="pixel"):
     try:
         img = np.asarray(image.convert("RGB") if isinstance(image, Image.Image) else image)[..., :3]
         cleaned, alpha, info, msg = clean_document_template(img, list(templates), library_dir or None,
-                                                            min_score=float(min_score), removal=removal or "pixel")
+                                                            min_score=float(min_score), removal=removal or "adaptive")
         overlay = footprint_overlay(img, alpha) if info["accepted"] else img
         return Image.fromarray(cleaned), Image.fromarray(np.ascontiguousarray(overlay)), msg
     except Exception as e:
@@ -157,6 +158,61 @@ def b_build(pages_dir, seed_name, editor, bx, by, bw, bh, name, library_dir, max
         return None, [], _err(e)
 
 
+def rebuildable(library_dir):
+    """Library templates whose meta.json records how they were built
+    (``source_folder``, ``seed_page``, ``seed_box``), so they can be rebuilt."""
+    out = []
+    root = tl.library_root(library_dir)
+    for n in _lib_names(library_dir):
+        try:
+            with open(os.path.join(root, n, "meta.json"), encoding="utf-8") as fh:
+                m = json.load(fh)
+        except Exception:
+            continue
+        if m.get("source_folder") and m.get("seed_page") and m.get("seed_box"):
+            out.append(n)
+    return out
+
+
+def b_rebuild_refresh(library_dir, current):
+    ch = rebuildable(library_dir)
+    return gr.update(choices=ch, value=current if current in ch else (ch[0] if ch else None))
+
+
+def b_rebuild(name, library_dir, max_pages, outer_iters, min_score, frame_w, progress=gr.Progress()):
+    """Rebuild a library template with the current builder from the pages, seed page
+    and box recorded in its meta.json (overwrites it only when the build succeeds;
+    a missing folder or seed page is reported and nothing is touched)."""
+    try:
+        if not name:
+            return None, [], "Choose a template to rebuild."
+        root = tl.library_root(library_dir or None)
+        mp = os.path.join(root, name, "meta.json")
+        if not os.path.isfile(mp):
+            return None, [], f"Template `{name}` not found in `{root}`."
+        with open(mp, encoding="utf-8") as fh:
+            meta = json.load(fh)
+        src, seed, box = meta.get("source_folder"), meta.get("seed_page"), meta.get("seed_box")
+        if not (src and seed and box):
+            return None, [], f"`{name}` has no recorded source folder / seed page / seed box; rebuild it from the Build section."
+        if not os.path.isdir(src):
+            return None, [], f"Cannot rebuild `{name}`: its pages folder `{src}` no longer exists. Nothing was changed."
+        if not os.path.isfile(os.path.join(src, str(seed))):
+            return None, [], f"Cannot rebuild `{name}`: the seed page `{seed}` is not in `{src}`. Nothing was changed."
+        if meta.get("seed_box_input"):                       # the box as the user gave it (the builder pads it by 5%)
+            box = meta["seed_box_input"]
+        elif int(meta.get("builder_version", 1) or 1) >= 2:  # padded box recorded by an earlier v2 build: undo the 5% padding
+            bx, by, bw, bh = [float(v) for v in box]
+            box = [bx + bw * 0.05 / 1.1, by + bh * 0.05 / 1.1, bw / 1.1, bh / 1.1]
+        res = build_template(src, seed, seed_box=tuple(float(v) for v in box), name=name, library_dir=library_dir or None,
+                             max_pages=int(max_pages), outer_iters=int(outer_iters), min_reg_score=float(min_score),
+                             frame_max_width=int(frame_w), overwrite=True, progress=progress)
+        prev = Image.fromarray(res["preview"]) if res.get("preview") is not None else None
+        return prev, res.get("overlays", []), res["message"]
+    except Exception as e:
+        return None, [], _err(e)
+
+
 def v_refresh(library_dir, cur_t, cur_r):
     ct, cr = _single_choices(library_dir), _single_choices(library_dir, with_none=True)
     vt = cur_t if cur_t in {v for _, v in ct} else None
@@ -164,7 +220,7 @@ def v_refresh(library_dir, cur_t, cur_r):
     return gr.update(choices=ct, value=vt), gr.update(choices=cr, value=vr)
 
 
-def v_run(template, pages_dir, out_dir, reference, clean_dir, max_pages, min_score, library_dir, removal="pixel",
+def v_run(template, pages_dir, out_dir, reference, clean_dir, max_pages, min_score, library_dir, removal="adaptive",
           progress=gr.Progress()):
     try:
         if not template:
@@ -174,7 +230,7 @@ def v_run(template, pages_dir, out_dir, reference, clean_dir, max_pages, min_sco
         res = validate_template(template, pages_dir, out_dir or None,
                                 reference=None if reference in (None, "", "None") else reference,
                                 clean_dir=clean_dir or None, max_pages=int(max_pages), min_score=float(min_score),
-                                progress=progress, library_dir=library_dir or None, removal=removal or "pixel")
+                                progress=progress, library_dir=library_dir or None, removal=removal or "adaptive")
         ref_img = res.get("reference_image")
         ref_img = Image.open(ref_img) if ref_img and os.path.isfile(ref_img) else None
         return res["message"], res.get("gallery", []), ref_img, res.get("csv")
@@ -195,8 +251,10 @@ def build_template_tabs():
             """
             **Method 5** removes a watermark from a **template library** (no trained model). It finds the
             template on the page with a colour-matched correlation on a faint-darkening signal, checks that
-            the page really shows it, and removes it with an exact inverse: **Per-pixel colour (v2)** uses the
-            template's per-pixel opacity and ink (best for coloured or solid marks), **Per-region (Stamp Fit)**
+            the page really shows it, and removes it with an exact inverse: **Page-adaptive (v3)** (default) fits the
+            mark's strength, edge profile and ink tint on the page itself and reads the opacity back from the page
+            where it can (best on real pages: sharpened edges, coloured banners), **Per-pixel colour (v2)** uses the
+            template's per-pixel opacity and ink with one strength per page, **Per-region (Stamp Fit)**
             is the earlier flat-ink-per-region fit. Build templates in the **Template Builder** tab; the two
             AriaTender PNGs work too.
             """
@@ -210,7 +268,7 @@ def build_template_tabs():
                     m5_refresh_btn = gr.Button("↻", scale=1, min_width=40)
                 m5_lib = gr.Textbox(value=DEFAULT_LIB, label="Library folder")
                 m5_score = gr.Slider(0.10, 0.80, value=0.30, step=0.01, label="Min match score")
-                m5_removal = gr.Radio(choices=REMOVAL_CHOICES, value="pixel", label="Removal model")
+                m5_removal = gr.Radio(choices=REMOVAL_CHOICES, value="adaptive", label="Removal model")
                 m5_btn = gr.Button("🧩 Clean", variant="primary", size="lg")
             with gr.Column(scale=5):
                 m5_out = gr.Image(label="2. Cleaned", type="pil")
@@ -262,8 +320,19 @@ def build_template_tabs():
                         b_prev = gr.Image(label="Template preview (opacity | the mark on paper | support)", type="pil")
                         b_gal = gr.Gallery(label="Fit overlays on accepted pages", columns=3, height="auto")
                         b_report = gr.Markdown(value="Load a folder to start.")
+                        with gr.Accordion("Rebuild an existing template", open=False):
+                            gr.Markdown("Rebuilds a library template with the **current builder** from the pages folder, seed page "
+                                        "and box recorded in its meta.json (same name, overwritten only when the build succeeds). "
+                                        "Use it for templates built with an older builder.")
+                            with gr.Row():
+                                b_rb_tpl = gr.Dropdown(choices=rebuildable(DEFAULT_LIB), value=None, label="Template to rebuild",
+                                                       scale=5, allow_custom_value=True)
+                                b_rb_refresh = gr.Button("↻", scale=1, min_width=40)
+                            b_rb_btn = gr.Button("♻️ Rebuild with current builder", variant="secondary")
                 b_load.click(b_load_folder, [b_dir], [b_seed, b_editor, b_report])
                 b_seed.input(b_seed_changed, [b_dir, b_seed], [b_editor])
+                b_rb_refresh.click(b_rebuild_refresh, [b_lib, b_rb_tpl], [b_rb_tpl])
+                b_rb_btn.click(b_rebuild, [b_rb_tpl, b_lib, b_maxp, b_iters, b_minscore, b_framew], [b_prev, b_gal, b_report])
                 b_btn.click(b_build, [b_dir, b_seed, b_editor, b_x, b_y, b_w, b_h, b_name, b_lib, b_maxp, b_iters,
                                       b_minscore, b_framew, b_over], [b_prev, b_gal, b_report])
 
@@ -283,7 +352,7 @@ def build_template_tabs():
                         with gr.Row():
                             v_maxp = gr.Slider(5, 300, value=100, step=1, label="Max pages")
                             v_score = gr.Slider(0.10, 0.80, value=0.30, step=0.01, label="Min score")
-                        v_removal = gr.Radio(choices=REMOVAL_CHOICES, value="pixel", label="Removal model")
+                        v_removal = gr.Radio(choices=REMOVAL_CHOICES, value="adaptive", label="Removal model")
                         v_btn = gr.Button("✅ Run validation", variant="primary", size="lg")
                     with gr.Column(scale=5):
                         v_report = gr.Markdown(value="Choose a template and a pages folder.")
