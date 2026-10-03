@@ -3,13 +3,23 @@ usable by ``stamp_fit``.
 
 Layout (one folder per template under ``assets/stamps/library/`` by default)::
 
-    <name>/template.png       RGBA uint8; A = coverage (peak 255), RGB = ink colour
-                              of the pixel's region (constant per region)
+    <name>/template.png       RGBA uint8. A = coverage (peak 255). v1: RGB = ink colour
+                              of the pixel's region (constant per region). v2: A =
+                              opacity / opacity_peak and RGB = the PER-PIXEL ink colour
     <name>/regions.png        uint8 label map, 0 = outside, 1..K = ink region
-                              (absent = one region)
+                              (absent = one region); v2 uses it only for the
+                              per-region Stamp Fit removal option
     <name>/meta.json          see ``save_template`` / the Template Builder
+                              (``builder_version`` 1 or 2; v2 adds ``opacity_peak``,
+                              ``ink_luminance``, ``instance_width_px``, ...)
     <name>/preview.png        human-readable preview
     <name>/build_report.json  per-page registration table from the build
+
+A loaded template always offers ``alpha`` (coverage, peak 1), ``ink`` (H, W, 3
+float, the ink at every pixel) and ``opacity_peak`` (the opacity a coverage of 1
+stands for: ``meta.opacity_peak`` for v2, the median build strength for v1, a
+nominal value for bare PNGs), so Method 5's per-pixel removal treats v1 and v2
+templates alike.
 
 Deliberate design choice -- registering into ``stamp_fit``
 ----------------------------------------------------------
@@ -84,10 +94,12 @@ def _regions_from_labels(alpha, labels):
 
 
 def save_template(name, alpha, region_labels, ink_rgb_per_region, meta, library_dir=None,
-                  overwrite=False):
+                  overwrite=False, ink_map=None):
     """Writes template.png (+ regions.png when K > 1) and meta.json. Returns the folder.
     ``alpha`` float 0-1 (H, W); ``region_labels`` uint8 (H, W) or None;
-    ``ink_rgb_per_region`` list of (r, g, b) 0-255, index i = region i+1."""
+    ``ink_rgb_per_region`` list of (r, g, b) 0-255, index i = region i+1.
+    ``ink_map`` (H, W, 3) uint8 (v2): the per-pixel ink; when given it is the RGB
+    of template.png and ``ink_rgb_per_region`` only fills meta-level summaries."""
     if not is_safe_name(name):
         raise ValueError(f"'{name}' is not a safe template name (letters, digits, _ - . ; up to 64 chars)")
     folder = os.path.join(library_root(library_dir), name)
@@ -97,11 +109,14 @@ def save_template(name, alpha, region_labels, ink_rgb_per_region, meta, library_
     H, W = alpha.shape
     labels = region_labels if region_labels is not None else (alpha > 0).astype(np.uint8)
     K = max(1, int(labels.max()))
-    rgb = np.zeros((H, W, 3), np.uint8)
-    for i in range(1, K + 1):
-        ink = ink_rgb_per_region[min(i - 1, len(ink_rgb_per_region) - 1)] if len(ink_rgb_per_region) else (100, 100, 100)
-        rgb[labels == i] = np.asarray(ink, np.uint8)
-    rgb[labels == 0] = np.asarray(ink_rgb_per_region[0] if len(ink_rgb_per_region) else (100, 100, 100), np.uint8)
+    if ink_map is not None:
+        rgb = np.ascontiguousarray(np.asarray(ink_map, np.uint8))
+    else:
+        rgb = np.zeros((H, W, 3), np.uint8)
+        for i in range(1, K + 1):
+            ink = ink_rgb_per_region[min(i - 1, len(ink_rgb_per_region) - 1)] if len(ink_rgb_per_region) else (100, 100, 100)
+            rgb[labels == i] = np.asarray(ink, np.uint8)
+        rgb[labels == 0] = np.asarray(ink_rgb_per_region[0] if len(ink_rgb_per_region) else (100, 100, 100), np.uint8)
     rgba = np.dstack([rgb, np.round(np.clip(alpha, 0, 1) * 255).astype(np.uint8)])
     Image.fromarray(rgba, "RGBA").save(os.path.join(folder, "template.png"))
     reg_path = os.path.join(folder, "regions.png")
@@ -135,7 +150,8 @@ def _load_bare_png(path):
     H, W = a.shape
     meta = dict(name=name, builder_version=0, source="bare png", template_size=[W, H], rel_width=None)
     return dict(alpha=a, regions=regions, meta=meta, path=os.path.abspath(path), kind="png",
-                mtime_ns=os.stat(path).st_mtime_ns)
+                mtime_ns=os.stat(path).st_mtime_ns, ink=np.ascontiguousarray(rgba[..., :3]).astype(np.float32),
+                opacity_peak=float(stamp_fit.DEFAULT_STRENGTH))
 
 
 def load_template(name_or_path, library_dir=None):
@@ -169,7 +185,23 @@ def load_template(name_or_path, library_dir=None):
         meta = json.load(fh)
     return dict(alpha=alpha, regions=_regions_from_labels(alpha, labels), meta=meta,
                 path=os.path.abspath(folder), kind="lib", mtime_ns=os.stat(tp).st_mtime_ns,
-                labels=labels)
+                labels=labels, ink=rgba[..., :3].astype(np.float32) / 255.0,
+                opacity_peak=_opacity_peak(meta))
+
+
+def _opacity_peak(meta):
+    """Opacity that a coverage of 1 stands for: ``opacity_peak`` of a v2 build, the
+    median per-page strength of a v1 build, else Stamp Fit's nominal strength."""
+    try:
+        v = meta.get("opacity_peak")
+        if v is None:
+            v = (meta.get("strength") or {}).get("median")
+        v = float(v)
+        if 0.02 <= v <= 0.95:
+            return v
+    except (TypeError, ValueError):
+        pass
+    return float(stamp_fit.DEFAULT_STRENGTH)
 
 
 def template_label(tpl):

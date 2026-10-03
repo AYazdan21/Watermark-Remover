@@ -2,29 +2,35 @@
 
 A watermark that a site stamps on every page is the one thing those pages
 have in common: the page content differs, the mark does not. Given 20+ pages
-and one box around the mark on one of them, this module
+and one box around the mark on one of them, this module (builder v2)
 
-1. makes a rough seed template from the faint darkening inside the box
-   (``template_signal``: paper background by closing, text zeroed),
-2. registers every page against it (multi-scale NCC + local refinement; pages
-   with a different mark, or none, fail the score and are rejected),
-3. warps all accepted pages into one common frame and takes the per-pixel
-   MEDIAN of their luminance gradients (Dekel et al., "On the Effectiveness of
-   Visible Watermarks", CVPR 2017, stage 1): the page content's gradients
-   differ page to page and cancel in the median, the mark's gradient is the
-   same on every page and survives; Poisson integration (DST-I solver, zero
-   Dirichlet boundary at the frame edge) turns the gradients back into an
-   image of the mark,
-4. refines it with an alternating minimisation of the image-formation model
-   ``B_i - I_i = o_i * u(p) * (B_i - k_r)`` (B_i = the page's paper
-   background, o_i = the page's strength, u = coverage shape, k_r = the ink of
-   the pixel's region): per-page strength by trimmed least squares, per-pixel
-   coverage by a weighted, Tukey-biweight-reweighted least squares across
-   pages and channels,
-5. repeats registration with the refined template (``outer_iters`` times).
+1. makes a rough colour seed template from the faint darkening inside the box
+   (``template_signal``: paper background interpolated across the box, text
+   zeroed),
+2. registers every page against it: multi-scale colour-matched correlation over
+   ABSOLUTE scales (a site's mark need not scale with the page width) plus local
+   refinement; a candidate pose is accepted only if the page itself shows the
+   mark (Stamp Fit's evidence check) -- pages with a different mark, or none,
+   are rejected there, not by a size-consistency rule,
+3. warps all accepted pages into one common frame together with their own
+   MARK-AWARE paper background (the mark's footprint left out and interpolated,
+   so a big solid area is not mistaken for background) and estimates the mark
+   per pixel with ``template_matte``: the robust (median + Tukey IRLS) matted
+   darkening ``W = a (1 - k)`` over the pages that show bare paper at the
+   pixel, a statistical-significance support instead of a noise floor, one
+   template-wide ink luminance (calibrated from text strokes crossing the mark
+   when possible), hence a per-pixel opacity ``a`` and a per-pixel ink ``k``,
+4. repeats registration with the refined template (``outer_iters`` times).
 
-The result is a library template (``template_library``) that Method 5
-(``template_stamp_fit``) removes with Stamp Fit's exact inverse.
+The result is a library template (``template_library``, ``builder_version`` 2)
+that Method 5 (``template_stamp_fit``) removes with the per-pixel colour model.
+
+Dekel et al., "On the Effectiveness of Visible Watermarks" (CVPR 2017), is the
+basis of the idea (many pages stamped with the same mark; estimate the mark
+from what they share). v1 followed its stage 1 literally (median gradients +
+Poisson integration) and fitted two flat ink colours; on a coloured, partly
+solid mark that left holes and a grey ghost, so v2 estimates the darkening
+directly against a background that does not contain the mark.
 
 Known limits
 ------------
@@ -32,35 +38,45 @@ Known limits
   ETENDER). A light mark on a dark banner is not estimated.
 - Rotation is fixed at 0; the layout of a multi-part mark is whatever the
   seed page shows (one rigid template).
-- Ink luminance is fixed by ``stamp_fit.INK_LUM_PRIOR`` (unobservable on flat
-  paper); it only matters for content under the mark.
+- Only the product ``a (1 - k)`` is observable on bare paper; the split into
+  opacity and ink uses one template-wide ink luminance (calibrated from text
+  crossings when >= 300 pixels see them, else ``stamp_fit.INK_LUM_PRIOR``). It
+  only matters for page content under the mark.
 - Pages where the site placed a different variant of the mark are rejected
   during the build: build one template per variant.
 
 Everything here is deterministic for a fixed input and page order.
 """
 
+import itertools
 import json
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
 from PIL import Image
-from scipy import fft as sfft
-from scipy import ndimage as ndi
 
 from . import stamp_fit
 from . import template_library as tl
+from . import template_matte as tm
 from . import template_signal as ts
 
-BUILDER_VERSION = 1
+BUILDER_VERSION = 2
 IMG_EXT = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 LUMA = ts.LUMA
-MAX_DARK = 0.35        # |B - I| beyond this is page content, not the mark
 MIN_PAGES = 5
-MIN_DARK_FRAC = 0.4    # share of stroke pixels that must be darker than the paper (mark is darker, see docstring)
+SCALE_RANGE = (0.3, 3.5)     # absolute scales searched in every round (page px per template px)
+N_SCALES = 30
+N_CANDS = 5                  # candidates refined and evidence-checked per page
+MIN_INSIDE = 0.4             # a mark may hang off the page, but >= 40% of its footprint must be on it
+MIN_AGREE_FRAC = 0.85        # a page whose agreement with the template is below this x the median is rejected
+FOOT_DILATE = 3              # px, footprint dilation for the mark-aware background
+MAX_EXPANSIONS = 2           # frame growths when the support touches the frame edge
+_counter = itertools.count()
+_EV_LOCK = threading.Lock()  # stamp_fit's resize cache is a plain dict
 
 
 # ---------------------------------------------------------------------------
@@ -84,18 +100,6 @@ def read_rgb(path):
         return None
 
 
-def _nanmedian0(a):
-    """Median over axis 0 ignoring NaN. Returns (median, count)."""
-    n = np.sum(~np.isnan(a), axis=0)
-    srt = np.sort(a, axis=0)                   # NaN sorts last
-    last = a.shape[0] - 1
-    lo = np.clip((n - 1) // 2, 0, last)
-    hi = np.clip(n // 2, 0, last)
-    m = 0.5 * (np.take_along_axis(srt, lo[None], 0)[0] + np.take_along_axis(srt, hi[None], 0)[0])
-    m = np.where(n > 0, m, np.nan)
-    return m.astype(np.float32), n
-
-
 def _bbox(mask, margin=0, shape=None):
     ys, xs = np.nonzero(mask)
     if ys.size == 0:
@@ -107,37 +111,34 @@ def _bbox(mask, margin=0, shape=None):
     return int(x0), int(y0), int(x1), int(y1)
 
 
-def _remove_small(u, thresh, min_px):
-    n, lab, stats, _ = cv2.connectedComponentsWithStats((u > thresh).astype(np.uint8), connectivity=8)
-    out = u.copy()
+def _remove_small(mask, min_px):
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+    out = mask.copy()
     for i in range(1, n):
         if stats[i, cv2.CC_STAT_AREA] < min_px:
-            out[lab == i] = 0
+            out[lab == i] = False
     return out
 
 
-def _prune(u):
-    """Zero pixels below 0.03, drop connected components of u > 0.1 smaller than
-    max(20, 0.0005 x frame area, 0.3% of all such pixels), and zero everything
-    that is not within 3 px of a kept component (isolated faint speckle)."""
-    u = u.copy()
-    u[u < 0.03] = 0
-    m = (u > 0.1).astype(np.uint8)
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
-    if n <= 1:
-        return u
-    total = int(stats[1:, cv2.CC_STAT_AREA].sum())
-    min_px = max(20, 0.0005 * u.size, 0.003 * total)
-    keep = np.zeros(n, bool)
-    keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= min_px
-    kept = keep[lab]
-    near = cv2.dilate(kept.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))) > 0
-    u[~near] = 0
-    return u
+class _Template:
+    """The template a registration round matches against: ``alpha`` (h, w)
+    coverage (peak 1), ``W3`` (h, w, 3) colour template or None (grey: match the
+    coverage), plus what the locate pass needs."""
 
+    def __init__(self, alpha, W3=None):
+        self.alpha = np.ascontiguousarray(alpha, np.float32)
+        self.W3 = None
+        if W3 is not None and ts.colour_spread(W3) >= 0.10:
+            self.W3 = np.ascontiguousarray(W3, np.float32)
+        self.thickness = ts.solid_thickness(self.alpha)
+        self.key = f"builder:{os.getpid()}:{next(_counter)}"
+        stamp_fit.templates()[self.key] = {"alpha": self.alpha, "regions": {"mark": self.alpha}}
 
-def _unit(v):
-    return v / max(float(np.linalg.norm(v)), 1e-9)
+    def kernel(self, scale):
+        return ts.kernel_for(self.thickness * scale, ts.MAX_SOLID_KERNEL)
+
+    def close(self):
+        stamp_fit.templates().pop(self.key, None)
 
 
 # ---------------------------------------------------------------------------
@@ -145,105 +146,112 @@ def _unit(v):
 # ---------------------------------------------------------------------------
 
 def _seed_template(img, box):
-    """Rough template from the faint darkening inside ``box`` = (x, y, w, h):
-    the box plus a 20% zero margin on each side, at seed-page scale."""
+    """Rough colour template from the faint darkening inside ``box`` = (x, y, w,
+    h): the paper is interpolated across the whole box from the bright pixels
+    around it (the closing used for locating needs a kernel wider than the
+    mark's thickest solid area, which is unknown here). The result is the box
+    plus a 20% zero margin on each side, at seed-page scale: (alpha, W3)."""
     H, W = img.shape[:2]
     x, y, w, h = box
-    k = int(np.clip(round(0.12 * min(w, h)), 15, 61)) | 1
-    m = k + 6
-    x0, y0 = max(0, x - m), max(0, y - m)
-    x1, y1 = min(W, x + w + m), min(H, y + h + m)
-    crop = np.ascontiguousarray(img[y0:y1, x0:x1])
-    sig = ts.normalise(ts.band_signal(crop, ts.paper_background(crop, k)))
-    c0 = sig[y - y0:y - y0 + h, x - x0:x - x0 + w].copy()
-    c0[c0 < 0.15] = 0
-    c0 = _remove_small(c0, 0.1, 20)
+    fp = np.zeros((H, W), bool)
+    fp[y:y + h, x:x + w] = True
+    B = ts.paper_background_masked(img, fp)
+    c3 = ts.normalise3(ts.band_signal3(img, B)[y:y + h, x:x + w])
+    c0 = c3.max(axis=2)
+    keep = _remove_small(c0 >= 0.15, 20)
     mx, my = int(round(0.2 * w)), int(round(0.2 * h))
-    tpl = np.zeros((h + 2 * my, w + 2 * mx), np.float32)
-    tpl[my:my + h, mx:mx + w] = c0
-    return tpl
+    alpha = np.zeros((h + 2 * my, w + 2 * mx), np.float32)
+    W3 = np.zeros((h + 2 * my, w + 2 * mx, 3), np.float32)
+    alpha[my:my + h, mx:mx + w] = np.where(keep, c0, 0)
+    W3[my:my + h, mx:mx + w] = c3 * keep[..., None]
+    return alpha, W3
 
 
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
-def _register_one(path, tpl, tsw, s_nom, lo, hi, n_scales, min_score):
+def _locate_page(path, T, scales):
     img = read_rgb(path)
     if img is None:
-        return dict(accepted=False, score=0.0, scale=0.0, x=0.0, y=0.0, reason="unreadable file", size=None)
+        return dict(size=None, cands=[], unreadable=True)
     H, W = img.shape[:2]
-    sn = s_nom(W)
-    scales = sn * np.geomspace(lo, hi, n_scales)
-    kernel = ts.kernel_for(tsw * sn * hi)
-    res = ts.locate_template(img, tpl, scales, kernel)
-    if res is None:
-        return dict(accepted=False, score=0.0, scale=0.0, x=0.0, y=0.0, reason="no candidate found", size=(W, H))
-    ok = res["score"] >= min_score and res["dark_frac"] >= MIN_DARK_FRAC
-    if res["score"] < min_score:
-        reason = f"best registration score {res['score']:.2f} < {min_score:.2f} (different mark or none)"
-    elif not ok:
-        reason = (f"the page is not darker than its paper along the matched strokes "
-                  f"({res['dark_frac']:.2f} of stroke pixels < {MIN_DARK_FRAC}); lighter marks are not supported")
-    else:
-        reason = ""
-    return dict(accepted=bool(ok), score=float(res["score"]), scale=float(res["scale"]), x=float(res["x"]),
-                y=float(res["y"]), size=(W, H), reason=reason)
+    res = ts.locate_template(img, T.alpha, scales, T.kernel, n_cands=N_CANDS, color=T.W3, polish=True)
+    cands = sorted(res["candidates"], key=lambda c: -c["score"]) if res else []
+    return dict(size=(W, H), cands=cands, unreadable=False)
 
 
-def _register_all(files, tpl, s_nom, lo, hi, n_scales, min_score, workers):
-    """Registers every page. A second, scale-constrained pass follows: the mark
-    is stamped at a size proportional to the page width, so once a few pages
-    matched confidently (score >= 0.5) their median relative width is a
-    strong prior. Pages that did not match, or matched at a size far from it
-    (a fit on page clutter), are searched again within +-25% of that width;
-    pages still inconsistent are rejected."""
-    tsw = ts.stroke_width(tpl)
-    Tw = tpl.shape[1]
+def _judge_page(path, T, loc, min_score):
+    """First candidate (best score first) that scores >= ``min_score``, keeps >=
+    40% of its footprint on the page AND passes Stamp Fit's evidence check; else
+    a rejection that quotes the best candidate's numbers."""
+    if loc["unreadable"]:
+        return dict(accepted=False, score=0.0, scale=0.0, x=0.0, y=0.0, size=None, reason="unreadable file")
+    W, H = loc["size"]
+    if not loc["cands"]:
+        return dict(accepted=False, score=0.0, scale=0.0, x=0.0, y=0.0, size=(W, H), reason="no candidate found")
+    img = read_rgb(path)
+    first = None
+    for c in loc["cands"]:
+        rec = dict(score=float(c["score"]), scale=float(c["scale"]), x=float(c["x"]), y=float(c["y"]), size=(W, H))
+        if c["score"] < min_score:
+            if first is None:
+                first = dict(rec, accepted=False,
+                             reason=f"best registration score {c['score']:.2f} < {min_score:.2f} (different mark or none)")
+            break
+        inside = ts.inside_fraction(T.alpha, c, (H, W))
+        if inside < MIN_INSIDE:
+            if first is None:
+                first = dict(rec, accepted=False,
+                             reason=f"best candidate (score {c['score']:.2f}) has only {inside:.0%} of the mark on the page")
+            continue
+        pose = dict(name=T.key, scale=c["scale"], x=c["x"], y=c["y"], sigma=0.0)
+        with _EV_LOCK:
+            change, control, frac = stamp_fit._evidence(img, [pose])
+        ev = dict(change=round(float(change), 2), control=round(float(control), 2), changed_fraction=round(float(frac), 3))
+        why = []
+        if change < stamp_fit.MIN_CHANGE:
+            why.append(f"change {change:.1f} < {stamp_fit.MIN_CHANGE}")
+        if change < stamp_fit.MIN_CHANGE_RATIO * control:
+            why.append(f"change {change:.1f} < {stamp_fit.MIN_CHANGE_RATIO}x control {control:.1f}")
+        if frac < stamp_fit.MIN_CHANGED_FRACTION:
+            why.append(f"changed fraction {frac:.2f} < {stamp_fit.MIN_CHANGED_FRACTION}")
+        if not why:
+            return dict(rec, accepted=True, reason="", evidence=ev, inside=round(inside, 3))
+        if first is None:
+            first = dict(rec, accepted=False, evidence=ev, inside=round(inside, 3),
+                         reason=f"best candidate (score {c['score']:.2f}) fails the evidence check: " + "; ".join(why))
+    return first or dict(accepted=False, score=0.0, scale=0.0, x=0.0, y=0.0, size=(W, H), reason="no usable candidate")
+
+
+def _register_all(files, T, min_score, workers):
+    scales = np.geomspace(SCALE_RANGE[0], SCALE_RANGE[1], N_SCALES)
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        res = list(ex.map(lambda p: _register_one(p, tpl, tsw, s_nom, lo, hi, n_scales, min_score), files))
-    for p, r in zip(files, res):
+        locs = list(ex.map(lambda p: _locate_page(p, T, scales), files))
+    rows = []
+    for p, loc in zip(files, locs):
+        r = _judge_page(p, T, loc, min_score)
         r["file"] = os.path.basename(p)
         r["path"] = p
-
-    def rel(r):
-        return r["scale"] * Tw / r["size"][0]
-
-    conf = [rel(r) for r in res if r["accepted"] and r["score"] >= 0.5]
-    if len(conf) >= 3:
-        m = float(np.median(conf))
-        redo = [i for i, r in enumerate(res) if r["size"] is not None and
-                (not r["accepted"] or not (0.8 <= rel(r) / m <= 1.25))]
-        prior = lambda Wp, _m=m, _t=Tw: _m * Wp / float(_t)
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            redone = list(ex.map(lambda i: _register_one(files[i], tpl, tsw, prior, 0.8, 1.25, 12, min_score), redo))
-        for i, r2 in zip(redo, redone):
-            old = res[i]
-            r2["file"], r2["path"] = old["file"], old["path"]
-            if r2["accepted"] and 0.8 <= rel(r2) / m <= 1.25:
-                res[i] = r2
-            elif old["accepted"]:
-                old["accepted"] = False
-                old["reason"] = (f"matched at {rel(old) / m:.2f}x the typical mark width, "
-                                 f"inconsistent with the other pages (probably clutter)")
-    return res
+        rows.append(r)
+    return rows
 
 
 # ---------------------------------------------------------------------------
 # Frame + warp
 # ---------------------------------------------------------------------------
 
-def _frame_geometry(tpl_shape, rows, pad_frac, frame_max_width):
-    Th, Tw = tpl_shape
-    px, py = int(round(pad_frac * Tw)), int(round(pad_frac * Th))
-    G = float(np.percentile([r["scale"] for r in rows], 75))
-    G = min(G, frame_max_width / float(Tw + 2 * px))
-    G = max(G, 8.0 / float(Tw + 2 * px))
-    Fw, Fh = int(round((Tw + 2 * px) * G)), int(round((Th + 2 * py) * G))
-    return dict(px=px, py=py, G=G, Fw=max(8, Fw), Fh=max(8, Fh), Tw=Tw, Th=Th)
+def _frame_geometry(Th, Tw, pads, G, frame_max_width):
+    """Frame = template extent plus per-side padding (template px), at ``G`` frame
+    px per template px (capped so the frame is at most ``frame_max_width`` wide)."""
+    ext_w = Tw + pads["l"] + pads["r"]
+    ext_h = Th + pads["t"] + pads["b"]
+    G = max(min(G, frame_max_width / float(ext_w)), 8.0 / float(ext_w))
+    return dict(pads=dict(pads), G=float(G), Fw=max(8, int(round(ext_w * G))), Fh=max(8, int(round(ext_h * G))),
+                Tw=Tw, Th=Th)
 
 
-def _to_frame(src, x0, y0, ox, oy, r, geo, fill_valid=False):
+def _to_frame(src, x0, y0, ox, oy, r, geo):
     """Warp a page crop (top-left at page (x0, y0)) into the frame whose
     top-left is page (ox, oy) and which has ``r`` page px per frame px."""
     Fw, Fh = geo["Fw"], geo["Fh"]
@@ -260,272 +268,94 @@ def _to_frame(src, x0, y0, ox, oy, r, geo, fill_valid=False):
                           borderMode=cv2.BORDER_CONSTANT, borderValue=0), (small, M)
 
 
-def _warp_page(row, geo, tsw):
+def _warp_page(row, geo, foot_alpha):
+    """The page's crop ``I`` (uint8), its mark-aware paper background ``B``
+    (float16) and the validity mask ``V``, all in the frame."""
     img = read_rgb(row["path"])
     if img is None:
         return None
     H, W = img.shape[:2]
     s, x, y = row["scale"], row["x"], row["y"]
-    G, Fw, Fh = geo["G"], geo["Fw"], geo["Fh"]
+    G, Fw, Fh, pads = geo["G"], geo["Fw"], geo["Fh"], geo["pads"]
     r = s / G
-    ox, oy = x - s * geo["px"], y - s * geo["py"]
-    k = ts.kernel_for(tsw * s)
-    x0 = max(0, int(np.floor(ox)) - k - 2); y0 = max(0, int(np.floor(oy)) - k - 2)
-    x1 = min(W, int(np.ceil(ox + r * Fw)) + k + 2); y1 = min(H, int(np.ceil(oy + r * Fh)) + k + 2)
+    ox, oy = x - s * pads["l"], y - s * pads["t"]
+    x0 = max(0, int(np.floor(ox)) - 3); y0 = max(0, int(np.floor(oy)) - 3)
+    x1 = min(W, int(np.ceil(ox + r * Fw)) + 3); y1 = min(H, int(np.ceil(oy + r * Fh)) + 3)
     if x1 - x0 < 8 or y1 - y0 < 8:
         return None
+    fp = ts.footprint_mask(foot_alpha, dict(scale=s, x=x, y=y), (H, W), FOOT_DILATE)
+    Bfull = ts.paper_background_masked(img, fp)
     crop = np.ascontiguousarray(img[y0:y1, x0:x1])
-    Bc = np.rint(ts.paper_background(crop, k) * 255).astype(np.uint8)
+    Bc = np.ascontiguousarray(Bfull[y0:y1, x0:x1])
     I, (small, M) = _to_frame(crop, x0, y0, ox, oy, r, geo)
     Bf, _ = _to_frame(Bc, x0, y0, ox, oy, r, geo)
     ones = np.full(small.shape[:2], 255, np.uint8)
     V = cv2.warpAffine(ones, M, (Fw, Fh), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
                        borderMode=cv2.BORDER_CONSTANT, borderValue=0) >= 250
-    return I, Bf, V
+    return I, Bf.astype(np.float16), V
 
 
-# ---------------------------------------------------------------------------
-# Stage 1: Dekel et al. 2017 -- median gradients + Poisson integration
-# ---------------------------------------------------------------------------
-
-def _dekel_initial(I, V, min_valid):
-    N, Fh, Fw = V.shape
-    Y = np.empty((N, Fh, Fw), np.float32)
-    for i in range(N):
-        Y[i] = I[i].astype(np.float32) @ (LUMA / 255.0)
-    Y[~V] = np.nan
-    Gx = np.zeros((Fh, Fw), np.float32)
-    Gy = np.zeros((Fh, Fw), np.float32)
-    R = max(8, int(6e6 // max(1, N * Fw)))
-    for r0 in range(0, Fh, R):
-        r1 = min(Fh, r0 + R)
-        gx = Y[:, r0:r1, 1:] - Y[:, r0:r1, :-1]
-        m, n = _nanmedian0(gx)
-        Gx[r0:r1, :-1] = np.where(n >= min_valid, np.nan_to_num(m), 0)
-        r1b = min(Fh - 1, r1)
-        if r1b > r0:
-            gy = Y[:, r0 + 1:r1b + 1, :] - Y[:, r0:r1b, :]
-            m, n = _nanmedian0(gy)
-            Gy[r0:r1b, :] = np.where(n >= min_valid, np.nan_to_num(m), 0)
-    div = np.zeros((Fh, Fw), np.float64)
-    div += Gx
-    div[:, 1:] -= Gx[:, :-1]
-    div += Gy
-    div[1:, :] -= Gy[:-1, :]
-    n_, m_ = Fh - 2, Fw - 2
-    W = np.zeros((Fh, Fw), np.float64)
-    if n_ >= 2 and m_ >= 2:
-        f = sfft.dstn(div[1:-1, 1:-1], type=1)
-        jj = np.arange(1, n_ + 1); kk = np.arange(1, m_ + 1)
-        lam = (2 * np.cos(np.pi * jj / (n_ + 1)) - 2)[:, None] + (2 * np.cos(np.pi * kk / (m_ + 1)) - 2)[None, :]
-        W[1:-1, 1:-1] = sfft.idstn(f / lam, type=1)
-    c1 = ts.normalise(np.maximum(-W, 0).astype(np.float32))
-    c1[c1 < 0.03] = 0
-    return c1, W.astype(np.float32)
-
-
-# ---------------------------------------------------------------------------
-# Stage 2: regions, ink, alternating minimisation
-# ---------------------------------------------------------------------------
-
-def _two_means(X):
-    mean = X.mean(0)
-    a = int(np.argmax(np.linalg.norm(X - mean, axis=1)))
-    b = int(np.argmax(np.linalg.norm(X - X[a], axis=1)))
-    c = [X[a].copy(), X[b].copy()]
-    lab = np.zeros(len(X), bool)
-    for _ in range(15):
-        lab = np.linalg.norm(X - c[1], axis=1) < np.linalg.norm(X - c[0], axis=1)
-        if lab.all() or (~lab).all():
-            break
-        c = [_unit(X[~lab].mean(0)), _unit(X[lab].mean(0))]
-    return c, lab
-
-
-def _estimate_regions(I, B, V, c1):
-    """labels (Fh, Fw) uint8 in 1..K, ink (K, 3) 0-1, dirs (K, 3), region pixel counts."""
-    N, Fh, Fw = V.shape
-    P = np.argwhere(c1 > 0.3)
-    if len(P) > 150000:
-        P = P[np.linspace(0, len(P) - 1, 150000).astype(int)]
-    ys, xs = P[:, 0], P[:, 1]
-    D = (B[:, ys, xs].astype(np.float32) - I[:, ys, xs].astype(np.float32)) / 255.0     # (N, M, 3)
-    nrm = np.linalg.norm(D, axis=2)
-    ok = V[:, ys, xs] & (nrm >= 0.02)
-    U = np.where(ok[..., None], D / np.maximum(nrm, 1e-6)[..., None], np.nan)
-    med = np.stack([_nanmedian0(U[..., c])[0] for c in range(3)], axis=1)               # (M, 3)
-    has = ~np.isnan(med).any(1)
-    med = med[has]
-    ys, xs = ys[has], xs[has]
-    if len(med) < 10:
-        med = np.tile(_unit(np.ones(3)), (10, 1)); ys = xs = np.zeros(10, int)
-    med = med / np.maximum(np.linalg.norm(med, axis=1, keepdims=True), 1e-9)
-    gdir = _unit(med.mean(0))
-    K, dirs, lab = 1, [gdir], np.zeros(len(med), int)
-    c, l2 = _two_means(med)
-    if l2.any() and (~l2).any():
-        ang = np.degrees(np.arccos(np.clip(float(c[0] @ c[1]), -1, 1)))
-        small = min(l2.sum(), (~l2).sum()) / len(med)
-        if ang > 10.0 and small >= 0.03:
-            order = [0, 1] if (~l2).sum() >= l2.sum() else [1, 0]      # region 1 = larger cluster
-            K, dirs = 2, [c[o] for o in order]
-            lab = np.where(l2, 1, 0) if order == [0, 1] else np.where(l2, 0, 1)
-    seed = np.zeros((Fh, Fw), np.uint8)
-    seed[ys, xs] = lab + 1
-    if K == 1:
-        labels = np.ones((Fh, Fw), np.uint8)
-    else:
-        idx = ndi.distance_transform_edt(seed == 0, return_distances=False, return_indices=True)
-        labels = seed[idx[0], idx[1]]
-        m2 = cv2.blur((labels == 2).astype(np.float32), (7, 7)) > 0.5      # majority smoothing
-        labels = np.where(m2, 2, 1).astype(np.uint8)
-    # ink per region: paper colour minus t * darkening direction, luma fixed by the prior
-    ink = []
-    for r in range(1, K + 1):
-        sel = (labels == r) & (c1 > 0.3)
-        yy, xx = np.nonzero(sel)
-        if yy.size == 0:
-            yy, xx = np.nonzero(labels == r)
-        if yy.size > 4000:
-            sub = np.linspace(0, yy.size - 1, 4000).astype(int); yy, xx = yy[sub], xx[sub]
-        pix = B[:, yy, xx].astype(np.float32) / 255.0
-        v = V[:, yy, xx]
-        paper = np.array([np.median(pix[..., c][v]) if v.any() else 1.0 for c in range(3)], np.float32)
-        d = dirs[r - 1].astype(np.float32)
-        ld = float(d @ LUMA)
-        t = (float(paper @ LUMA) - stamp_fit.INK_LUM_PRIOR) / ld if ld > 0.05 else 0.5
-        t = max(t, 0.05)
-        ink.append(np.clip(paper - t * d, 0, 1))
-    return labels, np.asarray(ink, np.float32), np.asarray(dirs, np.float32)
-
-
-def _fit_strengths(I, B, V, u, kmap):
+def _page_strengths(I, B, V, est, A, k, a_peak):
+    """Per page, the least-squares multiplier ``m_i`` of the template's opacity
+    (``B_i - I_i = m_i a (B_i - k)``) over the mark's pixels that show bare paper
+    on that page, and the cosine ``c_i`` between the observed darkening and the
+    template's over the same pixels. Raw (no prior, no clip): ``m_i`` ~ 0 means
+    the page does not show the mark at the fitted pose, a low ``c_i`` that it shows
+    something else there (a pose on clutter that still fits some strength)."""
     N = V.shape[0]
-    idx = np.flatnonzero(u.ravel() > 0.5)
-    if idx.size < 30:
-        idx = np.flatnonzero(u.ravel() > 0.2)
-    if idx.size < 30:
-        return np.ones(N, np.float32)
-    uu = u.ravel()[idx]
-    kk = kmap.reshape(-1, 3)[idx]
-    o = np.zeros(N, np.float32)
+    core = A > 0.1
+    a_abs = (a_peak * A)[..., None]
+    out = np.zeros(N, np.float32)
+    cos = np.zeros(N, np.float32)
+    se = np.ones((3, 3), np.uint8)
     for i in range(N):
-        Bi = B[i].reshape(-1, 3)[idx].astype(np.float32) / 255.0
-        Ii = I[i].reshape(-1, 3)[idx].astype(np.float32) / 255.0
-        D = Bi - Ii
-        x = uu[:, None] * (Bi - kk)
-        use = V[i].ravel()[idx] & (np.abs(D).max(1) <= MAX_DARK)
-        if use.sum() < 20:
-            o[i] = 0.0
+        txt = cv2.dilate(est["text"][i].astype(np.uint8), se) > 0
+        sel = core & V[i] & ~txt
+        if int(sel.sum()) < 20:
             continue
-        keep = use.copy()
-        val = 0.0
-        for _ in range(3):
-            den = float((x[keep] * x[keep]).sum())
-            if den < 1e-9:
-                break
-            val = float((x[keep] * D[keep]).sum() / den)
-            res = np.linalg.norm(D - val * x, axis=1)
-            thr = np.percentile(res[use], 75)
-            keep = use & (res <= thr)
-        o[i] = max(val, 0.0)
-    return o
-
-
-def _fit_coverage(I, B, V, o, kmap, rounds=2):
-    N, Fh, Fw = V.shape
-    u = np.zeros((Fh, Fw), np.float32)
-    R = max(4, int(4e6 // max(1, N * Fw * 3)))
-    oo = o[:, None, None, None]
-    for r0 in range(0, Fh, R):
-        r1 = min(Fh, r0 + R)
-        Bc = B[:, r0:r1].astype(np.float32) / 255.0
-        D = Bc - I[:, r0:r1].astype(np.float32) / 255.0
-        BK = oo * (Bc - kmap[None, r0:r1])
-        w = (V[:, r0:r1] & (np.abs(D).max(-1) <= MAX_DARK)).astype(np.float32)[..., None]
-        wt = w
-        for rnd in range(rounds + 1):
-            den = (wt * BK * BK).sum((0, 3))
-            num = (wt * BK * D).sum((0, 3))
-            uc = np.where(den > 1e-8, num / np.maximum(den, 1e-8), 0).astype(np.float32)
-            if rnd == rounds:
-                break
-            res = D - uc[None, ..., None] * BK
-            a = np.where(w > 0, np.abs(res), np.nan)
-            a = np.moveaxis(a, -1, 1).reshape(N * 3, r1 - r0, Fw)
-            mad, _ = _nanmedian0(a)
-            sig = np.maximum(1.4826 * np.nan_to_num(mad), 0.01)
-            t = np.clip(res / (4.685 * sig[None, ..., None]), -1, 1)
-            wt = w * (1 - t * t) ** 2
-        u[r0:r1] = uc
-    return u
-
-
-def _refine(I, B, V, c1, labels, ink, iters=4):
-    N = V.shape[0]
-    kmap = ink[labels.astype(int) - 1].astype(np.float32)
-    ref = c1 > 0.3
-    if ref.sum() < 10:
-        ref = c1 > 0.1
-    min_valid = max(5, 0.3 * N)
-    u = c1.copy()
-    for _ in range(iters):
-        o = _fit_strengths(I, B, V, u, kmap)
-        u = _fit_coverage(I, B, V, o, kmap)
-        peak = float(np.percentile(u[ref], 99.5)) if ref.any() else float(u.max())
-        u = np.clip(u / max(peak, 1e-3), 0, 1)
-    # Noise floor: with a few dozen pages every pixel keeps a little positive
-    # noise (JPEG texture / text rims divided by the mark's faint contrast).
-    # Estimate it where there is no mark and subtract it, so the support is
-    # the mark and not the whole frame.
-    core = cv2.dilate((c1 > 0.1).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))) > 0
-    bgm = (~core) & (V.sum(0) >= min_valid)
-    tau = 0.03
-    if bgm.sum() > 500:
-        tau = float(np.clip(np.percentile(u[bgm], 97), 0.03, 0.4))
-    u = np.clip((u - tau) / (1.0 - tau), 0, 1).astype(np.float32)
-    o = _fit_strengths(I, B, V, u, kmap)
-    u[u < 0.03] = 0
-    u[V.sum(0) < min_valid] = 0
-    u = _prune(u)
-    return u.astype(np.float32), o
+        Bi = B[i][sel].astype(np.float32)
+        y = Bi - I[i][sel].astype(np.float32) * (1.0 / 255.0)
+        x = a_abs[sel] * (Bi - k[sel])
+        out[i], _ = tm.fit_multiplier(y, x, prior=0.0, min_pixels=20, clip=None)
+        cos[i] = float((x * y).sum() / max(np.sqrt((x * x).sum() * (y * y).sum()), 1e-9))
+    return out, cos
 
 
 # ---------------------------------------------------------------------------
 # Previews
 # ---------------------------------------------------------------------------
 
-def make_preview(alpha, labels, ink_rgb, max_side=700):
-    """Left: coverage as grey on white. Right: the mark (region ink colours) on a checkerboard."""
-    H, W = alpha.shape
+def make_preview(A, a, ink, support, max_side=640):
+    """Three panels side by side: the opacity ``a`` as grey on white (normalised
+    to its peak), the mark as it appears on paper (``a k + (1 - a) white``) and
+    the support mask."""
+    H, W = A.shape
     f = min(3.0, max_side / max(H, W))
-    a = cv2.resize(alpha, (max(1, int(W * f)), max(1, int(H * f))), interpolation=cv2.INTER_AREA if f < 1 else cv2.INTER_CUBIC)
-    a = np.clip(a, 0, 1)
-    h, w = a.shape
-    left = np.repeat((255 * (1 - a))[..., None], 3, 2)
-    rgb = np.zeros((H, W, 3), np.float32)
-    for i, k in enumerate(ink_rgb, 1):
-        rgb[labels == i] = k
-    rgb = cv2.resize(rgb, (w, h), interpolation=cv2.INTER_NEAREST)
-    yy, xx = np.mgrid[0:h, 0:w]
-    cb = np.where(((yy // 12 + xx // 12) % 2) == 0, 235.0, 175.0)[..., None]
-    right = rgb * a[..., None] + cb * (1 - a[..., None])
-    gap = np.full((h, 8, 3), 128.0)
-    return np.clip(np.hstack([left, gap, right]), 0, 255).astype(np.uint8)
+    sz = (max(1, int(W * f)), max(1, int(H * f)))
+    interp = cv2.INTER_AREA if f < 1 else cv2.INTER_CUBIC
+    An = np.clip(cv2.resize(A, sz, interpolation=interp), 0, 1)
+    a_ = np.clip(cv2.resize(a, sz, interpolation=interp), 0, 1)
+    ink_ = np.stack([cv2.resize(ink[..., c], sz, interpolation=interp) for c in range(3)], -1)
+    sup = cv2.resize(support.astype(np.uint8) * 255, sz, interpolation=cv2.INTER_NEAREST)
+    left = np.repeat((255 * (1 - An))[..., None], 3, 2)
+    mid = 255.0 * (a_[..., None] * ink_ + (1 - a_[..., None]))
+    right = np.repeat(255 - sup[..., None], 3, 2).astype(np.float32)
+    gap = np.full((sz[1], 8, 3), 128.0)
+    return np.clip(np.hstack([left, gap, mid, gap, right]), 0, 255).astype(np.uint8)
 
 
-def _overlay(path, tpl, pose, out_path):
+def _overlay(path, alpha, pose, out_path):
     img = read_rgb(path)
     if img is None:
         return False
     H, W = img.shape[:2]
-    tw, th = ts.template_size(tpl, pose["scale"])
+    tw, th = ts.template_size(alpha, pose["scale"])
     m = int(0.2 * max(tw, th))
     x0, y0 = max(0, int(pose["x"]) - m), max(0, int(pose["y"]) - m)
     x1, y1 = min(W, int(pose["x"]) + tw + m), min(H, int(pose["y"]) + th + m)
     if x1 - x0 < 8 or y1 - y0 < 8:
         return False
-    cov = ts.render_template(tpl, pose["scale"], pose["x"], pose["y"], (x0, y0, x1 - x0, y1 - y0))
+    cov = ts.render_template(alpha, pose["scale"], pose["x"], pose["y"], (x0, y0, x1 - x0, y1 - y0))
     crop = np.ascontiguousarray(img[y0:y1, x0:x1])
     cnts, _ = cv2.findContours((cov >= 0.5).astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(crop, cnts, -1, (255, 0, 0), max(1, int(round(0.004 * max(crop.shape[:2])))))
@@ -537,11 +367,60 @@ def _overlay(path, tpl, pose, out_path):
 
 
 # ---------------------------------------------------------------------------
+# One estimation round (warp + estimate + support + opacity/ink)
+# ---------------------------------------------------------------------------
+
+def _estimate_round(acc, T, foot_alpha, pads, frame_max_width, workers, prog, base, span):
+    """Warps the accepted pages into a frame (growing it up to twice when the
+    support touches its edge), estimates the mark and returns a dict with the
+    full-frame maps, the geometry and the per-page rows (None when it fails)."""
+    Th, Tw = T.alpha.shape
+    G0 = float(np.median([r["scale"] for r in acc]))
+    expansions = 0
+    pads = dict(pads)
+    while True:
+        geo = _frame_geometry(Th, Tw, pads, G0, frame_max_width)
+        prog(base + 0.30 * span, f"warping {len(acc)} pages into the frame")
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            warped = list(ex.map(lambda r: _warp_page(r, geo, foot_alpha), acc))
+        keep = [(r, wp) for r, wp in zip(acc, warped) if wp is not None]
+        if len(keep) < MIN_PAGES:
+            return None
+        rows = [r for r, _ in keep]
+        I = np.stack([wp[0] for _, wp in keep])
+        B = np.stack([wp[1] for _, wp in keep])
+        V = np.stack([wp[2] for _, wp in keep])
+        del warped, keep
+        N = len(rows)
+        prog(base + 0.55 * span, "estimating the matted darkening")
+        est = tm.estimate(I, B, V)
+        sup, counts = tm.support_mask(est, N)
+        if sup.sum() >= 30:
+            # second pass: with a first opacity known, the exact per-page sample D + a (1 - B) replaces D / B
+            L1 = tm.calibrate_ink(I, V, est, sup, est["W"], stamp_fit.INK_LUM_PRIOR)["L_ink"]
+            a1, _ = tm.opacity_and_ink(est["W"], L1, sup)
+            est = tm.estimate(I, B, V, a_prior=a1)
+            sup, counts = tm.support_mask(est, N)
+        edge = {"l": bool(sup[:, 0].any()), "r": bool(sup[:, -1].any()),
+                "t": bool(sup[0, :].any()), "b": bool(sup[-1, :].any())}
+        touched = [s for s, v in edge.items() if v]
+        if touched and expansions < MAX_EXPANSIONS:
+            ext_w = Tw + pads["l"] + pads["r"]
+            ext_h = Th + pads["t"] + pads["b"]
+            for s in touched:
+                pads[s] += 0.15 * (ext_w if s in "lr" else ext_h)
+            expansions += 1
+            continue
+        return dict(rows=rows, I=I, B=B, V=V, est=est, sup=sup, counts=counts, geo=geo, N=N,
+                    expansions=expansions, touches=touched, pads=pads)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def build_template(pages_dir, seed_page, seed_box=None, seed_mask=None, name=None, library_dir=None,
-                   max_pages=60, outer_iters=2, min_reg_score=0.30, frame_max_width=1000,
+                   max_pages=60, outer_iters=3, min_reg_score=0.20, frame_max_width=1000,
                    overwrite=False, progress=None, workers=None):
     """Builds a template from the pages in ``pages_dir`` and saves it into the
     library. ``seed_box`` = (x, y, w, h) in seed-page pixels, or ``seed_mask`` =
@@ -601,150 +480,154 @@ def build_template(pages_dir, seed_page, seed_box=None, seed_mask=None, name=Non
     workers = workers or max(1, min(4, os.cpu_count() or 2))
 
     prog(0.02, "seed template")
-    tpl = _seed_template(seed_img, box)
-    if (tpl > 0.3).sum() < 30:
+    a0, W3_0 = _seed_template(seed_img, box)
+    if (a0 > 0.3).sum() < 30:
         return fail("no faint darkening found inside the box (is the mark darker than the page, and inside the box?)")
 
+    T = _Template(a0, W3_0)
+    keys = [T.key]
     warnings = []
-    rows_final = None
-    N_read = 0
-    prev_rows = None
     final = None
+    reg_rows = None
     iters = max(1, int(outer_iters))
-    for it in range(iters):
-        base = 0.05 + 0.9 * it / iters
-        span = 0.9 / iters
-        # ---- 5.3 register every page ------------------------------------
-        prog(base, f"registering {len(order)} pages (round {it + 1}/{iters})")
-        Th, Tw = tpl.shape
-        if it == 0:
-            s_nom = lambda Wp, _w=SW: (Wp / float(_w))
-            lo, hi, ns = 0.4, 2.5, 30
-        else:
-            rel = float(np.median([r["scale"] * Tw / r["size"][0] for r in rows_final]))
-            s_nom = lambda Wp, _r=rel, _t=Tw: _r * Wp / float(_t)
-            lo, hi, ns = 0.6, 1.7, 20
-        rows = _register_all(order, tpl, s_nom, lo, hi, ns, min_reg_score, workers)
-        acc = [r for r in rows if r["accepted"]]
-        N_read = sum(1 for r in rows if r["reason"] != "unreadable file")
-        if N_read < MIN_PAGES:
-            return fail(f"only {N_read} readable pages")
-        if len(acc) < MIN_PAGES:
-            return fail(f"only {len(acc)} of {N_read} pages matched the seed (need {MIN_PAGES}). Draw a tighter box "
-                        f"around the mark, pick a seed page where it is clearly visible, or lower the registration score.")
-        # early stop when nothing moved (rows_final is already in this template's coordinates)
-        if it > 0 and rows_final is not None:
-            prev = {r["file"]: r for r in rows_final}
-            if sorted(prev) == sorted(r["file"] for r in acc):
-                move = max(np.hypot((a["x"] + a["scale"] * Tw / 2) - (prev[a["file"]]["x"] + prev[a["file"]]["scale"] * Tw / 2),
-                                    (a["y"] + a["scale"] * Th / 2) - (prev[a["file"]]["y"] + prev[a["file"]]["scale"] * Th / 2))
-                           for a in acc)
-                if move < 0.5:
-                    break
-        prev_rows = rows
-        # ---- 5.4 frame resolution and warp ------------------------------
-        prog(base + 0.35 * span, "warping accepted pages into the frame")
-        geo = _frame_geometry(tpl.shape, acc, 0.0 if it == 0 else 0.2, frame_max_width)
-        tsw = ts.stroke_width(tpl)
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            warped = list(ex.map(lambda r: _warp_page(r, geo, tsw), acc))
-        keep = [(r, wp) for r, wp in zip(acc, warped) if wp is not None]
-        acc = [r for r, _ in keep]
-        if len(acc) < MIN_PAGES:
-            return fail("too few pages could be warped into the frame")
-        I = np.stack([wp[0] for _, wp in keep]); Bf = np.stack([wp[1] for _, wp in keep]); V = np.stack([wp[2] for _, wp in keep])
-        del warped, keep
-        N = len(acc)
-        # ---- 5.5 Dekel stage 1 -------------------------------------------
-        prog(base + 0.55 * span, "median gradients + Poisson integration")
-        c1, _ = _dekel_initial(I, V, max(5, 0.3 * N))
-        if (c1 > 0.3).sum() < 30:
-            return fail("the pages' common gradient is empty: the registration did not find a shared mark")
-        # ---- 5.6 regions, ink, alternating minimisation ------------------
-        prog(base + 0.7 * span, "refining coverage")
-        labels, ink, _ = _estimate_regions(I, Bf, V, c1)
-        u, o = _refine(I, Bf, V, c1, labels, ink)
-        if (u > 0.1).sum() < 30:
-            return fail("refinement produced an empty template")
-        edge = np.zeros_like(u, bool); edge[0, :] = edge[-1, :] = True; edge[:, 0] = edge[:, -1] = True
-        touches = bool((u[edge] > 0.03).any())
-        # ---- crop to support (+4 px) --------------------------------------
-        bb = _bbox(u > 0.03, margin=4, shape=u.shape)
-        cx0, cy0, cx1, cy1 = bb
-        u_c = np.ascontiguousarray(u[cy0:cy1, cx0:cx1])
-        lab_c = np.ascontiguousarray(labels[cy0:cy1, cx0:cx1])
-        # poses relative to the cropped template
-        G = geo["G"]
-        new_rows = []
-        for r, oi in zip(acc, o):
-            s2 = r["scale"] / G
-            ox = r["x"] - r["scale"] * geo["px"]; oy = r["y"] - r["scale"] * geo["py"]
-            new_rows.append(dict(file=r["file"], path=r["path"], scale=s2, x=ox + s2 * cx0, y=oy + s2 * cy0,
-                                 score=r["score"], strength=float(oi), size=r["size"]))
-        final = dict(u=u_c, labels=lab_c, ink=ink, geo=geo, touches=touches, n=N, rows=new_rows,
-                     frame=(cx0, cy0, cx1, cy1))
-        rows_final = new_rows
-        tpl = u_c
-        prog(base + span, f"round {it + 1} done")
+    try:
+        for it in range(iters):
+            base = 0.05 + 0.9 * it / iters
+            span = 0.9 / iters
+            prog(base, f"registering {len(order)} pages (round {it + 1}/{iters})")
+            Th, Tw = T.alpha.shape
+            rows = _register_all(order, T, min_reg_score, workers)
+            acc = [r for r in rows if r["accepted"]]
+            n_read = sum(1 for r in rows if r["reason"] != "unreadable file")
+            if n_read < MIN_PAGES:
+                return fail(f"only {n_read} readable pages")
+            if len(acc) < MIN_PAGES:
+                return fail(f"only {len(acc)} of {n_read} pages showed the seed mark (need {MIN_PAGES}). Draw a tighter box "
+                            f"around the mark, pick a seed page where it is clearly visible, or lower the registration score.")
+            # early stop when nothing moved (final rows are already in this template's coordinates)
+            if it > 0 and final is not None:
+                prev = {r["file"]: r for r in final["rows"]}
+                if sorted(prev) == sorted(r["file"] for r in acc):
+                    move = max(np.hypot((a["x"] + a["scale"] * Tw / 2) - (prev[a["file"]]["x"] + prev[a["file"]]["scale"] * Tw / 2),
+                                        (a["y"] + a["scale"] * Th / 2) - (prev[a["file"]]["y"] + prev[a["file"]]["scale"] * Th / 2))
+                               for a in acc)
+                    if move < 0.5:
+                        reg_rows = rows
+                        break
+            reg_rows = rows
+            pads = {s: 0.0 for s in "ltrb"} if it == 0 else {"l": 0.2 * Tw, "r": 0.2 * Tw, "t": 0.2 * Th, "b": 0.2 * Th}
+            foot = np.ones_like(T.alpha) if it == 0 else T.alpha
+            rd = _estimate_round(acc, T, foot, pads, frame_max_width, workers, prog, base, span)
+            if rd is None:
+                return fail("too few pages could be warped into the frame")
+            est, sup, N = rd["est"], rd["sup"], rd["N"]
+            if sup.sum() < 30:
+                return fail("the pages share no consistent darkening at the registered poses: the registration did not find a shared mark")
+            prog(base + 0.75 * span, "opacity, ink and regions")
+            W = est["W"]
+            cal = tm.calibrate_ink(rd["I"], rd["V"], est, sup, W, stamp_fit.INK_LUM_PRIOR)
+            L_ink = cal["L_ink"]
+            a, k = tm.opacity_and_ink(W, L_ink, sup)
+            a_peak = float(np.percentile(a[sup], 99.5))
+            if a_peak < 0.01:
+                return fail("the estimated mark is too faint to use")
+            A = np.clip(a / a_peak, 0, 1).astype(np.float32)
+            m_i, cos_i = _page_strengths(rd["I"], rd["B"], rd["V"], est, A, k, a_peak)
+            # crop to the support (+4 px)
+            bb = _bbox(sup, margin=4, shape=sup.shape)
+            cx0, cy0, cx1, cy1 = bb
+            sl = (slice(cy0, cy1), slice(cx0, cx1))
+            geo = rd["geo"]
+            G = geo["G"]
+            new_rows = []
+            for r, mi, ci in zip(rd["rows"], m_i, cos_i):
+                s2 = r["scale"] / G
+                ox = r["x"] - r["scale"] * rd["pads"]["l"]
+                oy = r["y"] - r["scale"] * rd["pads"]["t"]
+                new_rows.append(dict(file=r["file"], path=r["path"], scale=s2, x=ox + s2 * cx0, y=oy + s2 * cy0,
+                                     score=r["score"], strength=float(mi * a_peak), mult=float(mi), cos=float(ci), size=r["size"],
+                                     evidence=r.get("evidence")))
+            final = dict(A=A[sl].copy(), a=a[sl].copy(), k=k[sl].copy(), sup=sup[sl].copy(), a_peak=a_peak,
+                         L_ink=L_ink, cal=cal, geo=geo, N=N, rows=new_rows, counts=rd["counts"],
+                         expansions=rd["expansions"], touches=rd["touches"])
+            T.close()
+            T = _Template(final["A"], ts.colour_template(final["A"], final["k"]))
+            keys.append(T.key)
+            prog(base + span, f"round {it + 1} done")
+    finally:
+        for kk in keys:
+            stamp_fit.templates().pop(kk, None)
 
-    # ---- 5.8 finish ---------------------------------------------------
+    # ---- finish ------------------------------------------------------------
     prog(0.96, "saving")
-    u, labels = final["u"], final["labels"]
-    ink = final["ink"]
-    Th, Tw = u.shape
-    # drop empty regions, relabel in order of size
-    ids = [i for i in range(1, len(ink) + 1) if (u[(labels == i)] > 0.03).sum() > 0]
-    counts = [int((u[(labels == i)] > 0.03).sum()) for i in ids]
-    ids = [i for _, i in sorted(zip([-c for c in counts], ids))]
-    new_lab = np.zeros_like(labels)
-    for j, i in enumerate(ids, 1):
-        new_lab[(labels == i) & (u > 0.03)] = j
-    ink_u8 = [tuple(int(v) for v in np.round(ink[i - 1] * 255)) for i in ids] or [(100, 100, 100)]
-    pix = [int((new_lab == j).sum()) for j in range(1, len(ids) + 1)]
+    A, a, k, sup = final["A"], final["a"], final["k"], final["sup"]
+    a_peak, L_ink = final["a_peak"], final["L_ink"]
+    Th, Tw = A.shape
+    labels, ink_mean = tm.cluster_regions(a, k, A, sup)
+    K = int(labels.max())
+    ink_u8 = [tuple(int(v) for v in np.round(c * 255)) for c in ink_mean]
+    pix = [int((labels == j).sum()) for j in range(1, K + 1)]
+    ink_map = np.where(sup[..., None], k, ink_mean[0][None, None, :])
+    ink_map = np.round(ink_map * 255).astype(np.uint8)
     # a page whose fitted strength is ~0 does not actually show the mark at the fitted pose
-    # (a fit on clutter, or a lighter-than-page mark): report it as rejected
-    med_o = float(np.median([r["strength"] for r in rows_final]))
-    weak = {r["file"]: r for r in rows_final if r["strength"] < 0.3 * med_o}
+    rows_final = final["rows"]
+    med_m = float(np.median([r["mult"] for r in rows_final]))
+    med_c = float(np.median([r["cos"] for r in rows_final]))
+    weak = {r["file"]: r for r in rows_final if r["mult"] < 0.3 * med_m or r["cos"] < MIN_AGREE_FRAC * med_c}
     rows_final = [r for r in rows_final if r["file"] not in weak]
     accepted_rows = {r["file"]: r for r in rows_final}
     all_rows = []
-    for r in prev_rows if prev_rows is not None else []:
-        a = accepted_rows.get(r["file"])
-        if a is not None:
-            all_rows.append(dict(file=r["file"], accepted=True, score=round(a["score"], 4), scale=round(a["scale"], 5),
-                                 x=round(a["x"], 2), y=round(a["y"], 2), strength=round(a["strength"], 4), reason=""))
+    for r in reg_rows or []:
+        acc_r = accepted_rows.get(r["file"])
+        if acc_r is not None:
+            all_rows.append(dict(file=r["file"], accepted=True, score=round(acc_r["score"], 4), scale=round(acc_r["scale"], 5),
+                                 x=round(acc_r["x"], 2), y=round(acc_r["y"], 2), strength=round(acc_r["strength"], 4),
+                                 agreement=round(acc_r["cos"], 4), reason="", evidence=acc_r.get("evidence")))
         else:
             w_ = weak.get(r["file"])
-            reason = (f"no measurable mark at the fitted pose (strength {w_['strength']:.3f} vs median {med_o:.3f})"
-                      if w_ else (r["reason"] or "could not be warped into the frame"))
-            all_rows.append(dict(file=r["file"], accepted=False, score=round(r["score"], 4), scale=None, x=None,
-                                 y=None, strength=None, reason=reason))
-    # prev_rows may be the last registration (poses relative to the previous template): accepted rows above
-    # use the converted poses, rejected rows keep their reason.
+            if w_ and w_["mult"] < 0.3 * med_m:
+                reason = (f"no measurable mark at the fitted pose (strength {w_['strength']:.3f} vs median "
+                          f"{med_m * a_peak:.3f})")
+            elif w_:
+                reason = (f"the page disagrees with the template at the fitted pose (agreement {w_['cos']:.2f} vs "
+                          f"median {med_c:.2f}; probably a fit on clutter)")
+            else:
+                reason = r.get("reason") or "could not be warped into the frame"
+            all_rows.append(dict(file=r["file"], accepted=False, score=round(r.get("score", 0.0), 4), scale=None, x=None,
+                                 y=None, strength=None, reason=reason, evidence=r.get("evidence")))
     acc_rows = list(rows_final)
+    widths = [r["scale"] * Tw for r in acc_rows]
     rel = [r["scale"] * Tw / r["size"][0] for r in acc_rows]
     stren = [r["strength"] for r in acc_rows]
     if final["touches"]:
-        warnings.append("the mark may extend past your box; draw a bigger box")
+        warnings.append("the mark may extend past your box (the support still touches the frame edge after "
+                        f"{final['expansions']} expansion(s)); draw a bigger box")
     if len(acc_rows) < 20:
         warnings.append(f"only {len(acc_rows)} pages were used; 20+ gives a cleaner estimate")
+    if final["cal"]["source"] == "prior":
+        warnings.append("ink luminance is the prior (" + (final["cal"]["reason"] or "no text crossings")
+                        + "); it only matters for page content under the mark")
     nrej = len(all_rows) - len(acc_rows)
-    sw = ts.stroke_width(u)
+    sw = ts.stroke_width(A)
     elapsed = time.time() - t_start
+    stat = lambda v: dict(median=float(np.median(v)), min=float(np.min(v)), max=float(np.max(v)))
     meta = dict(name=name, builder_version=BUILDER_VERSION, source_folder=pages_dir_r,
                 seed_page=os.path.basename(seed_p), seed_box=[int(v) for v in box],
                 n_pages_used=len(acc_rows), n_pages_rejected=int(nrej), template_size=[int(Tw), int(Th)],
-                rel_width=dict(median=float(np.median(rel)), min=float(np.min(rel)), max=float(np.max(rel))),
-                strength=dict(median=float(np.median(stren)), min=float(np.min(stren)), max=float(np.max(stren))),
-                regions=[dict(id=j, ink_rgb=list(ink_u8[j - 1]), pixels=pix[j - 1]) for j in range(1, len(ids) + 1)],
-                stroke_width_px=float(sw), build_seconds=round(elapsed, 1), warnings=warnings,
-                params=dict(params, workers=workers, frame_scale_G=float(final["geo"]["G"])))
+                rel_width=stat(rel), instance_width_px=stat(widths), strength=stat(stren),
+                opacity_peak=float(a_peak), ink_luminance=float(L_ink), ink_luminance_source=final["cal"]["source"],
+                ink_luminance_detail=final["cal"].get("reason", ""),
+                regions=[dict(id=j, ink_rgb=list(ink_u8[j - 1]), pixels=pix[j - 1]) for j in range(1, K + 1)],
+                stroke_width_px=float(sw), support_rules=final["counts"], frame_expansions=int(final["expansions"]),
+                build_seconds=round(elapsed, 1), warnings=warnings,
+                params=dict(params, workers=workers, frame_scale_G=float(final["geo"]["G"]),
+                            scale_range=list(SCALE_RANGE), n_scales=N_SCALES))
     try:
-        folder = tl.save_template(name, u, new_lab if len(ids) > 1 else None, ink_u8, meta,
-                                  library_dir=library_dir, overwrite=overwrite)
+        folder = tl.save_template(name, A, labels if K > 1 else None, ink_u8, meta, library_dir=library_dir,
+                                  overwrite=overwrite, ink_map=ink_map)
     except Exception as e:
         return fail(str(e))
-    preview = make_preview(u, np.maximum(new_lab, 1) if len(ids) <= 1 else new_lab, ink_u8)
+    preview = make_preview(A, a, k, sup)
     Image.fromarray(preview).save(os.path.join(folder, "preview.png"))
     overlays = []
     if acc_rows:
@@ -752,7 +635,7 @@ def build_template(pages_dir, seed_page, seed_box=None, seed_mask=None, name=Non
         for n, i in enumerate(pick):
             r = acc_rows[i]
             op = os.path.join(folder, f"overlay_{n:02d}.png")
-            if _overlay(r["path"], u, dict(scale=r["scale"], x=r["x"], y=r["y"]), op):
+            if _overlay(r["path"], A, dict(scale=r["scale"], x=r["x"], y=r["y"]), op):
                 overlays.append(op)
     report = dict(rows=all_rows, summary=meta, warnings=warnings, elapsed=elapsed)
     with open(os.path.join(folder, "build_report.json"), "w", encoding="utf-8") as fh:
@@ -764,21 +647,34 @@ def build_template(pages_dir, seed_page, seed_box=None, seed_mask=None, name=Non
 
 def _summary_md(name, folder, meta, rows, elapsed, warnings):
     rej = [r for r in rows if not r["accepted"]]
+    iw = meta["instance_width_px"]
+    cnt = meta["support_rules"]
     lines = [f"### Template `{name}` built in {elapsed:.0f} s",
              f"- saved to `{folder}`",
              f"- pages used **{meta['n_pages_used']}**, rejected **{meta['n_pages_rejected']}**",
              f"- template size {meta['template_size'][0]}x{meta['template_size'][1]} px, "
-             f"instance width / page width: median {meta['rel_width']['median']:.3f} "
+             f"instance width: median {iw['median']:.0f} px (min {iw['min']:.0f}, max {iw['max']:.0f}); "
+             f"as a fraction of page width: median {meta['rel_width']['median']:.3f} "
              f"(min {meta['rel_width']['min']:.3f}, max {meta['rel_width']['max']:.3f})",
-             f"- strength: median {meta['strength']['median']:.3f} "
+             f"- opacity peak **{meta['opacity_peak']:.3f}**; per-page strength: median {meta['strength']['median']:.3f} "
              f"(min {meta['strength']['min']:.3f}, max {meta['strength']['max']:.3f})",
-             f"- regions: " + ", ".join(f"#{g['id']} ink rgb{tuple(g['ink_rgb'])} ({g['pixels']} px)" for g in meta["regions"])]
+             f"- ink luminance **{meta['ink_luminance']:.2f}** (source: {meta['ink_luminance_source']}"
+             + (f", {meta['ink_luminance_detail']}" if meta.get("ink_luminance_detail") else "") + ")",
+             f"- support: {cnt['kept']} px kept; rules removed {cnt['removed_by_valid_pages']} (too few pages), "
+             f"{cnt['removed_by_min_darkening']} (darkening < 0.012), {cnt['removed_by_significance']} (z < 4), "
+             f"{cnt['removed_small_components']} (components < 6 px); gap closing added {cnt['added_by_gap_closing']}",
+             f"- frame expansions: {meta['frame_expansions']}",
+             f"- ink regions (for the per-region removal option): "
+             + ", ".join(f"#{g['id']} rgb{tuple(g['ink_rgb'])} ({g['pixels']} px)" for g in meta["regions"])]
     for wmsg in warnings:
         lines.append(f"- WARNING: {wmsg}")
     if rej:
         lines.append("\n**Rejected pages**\n")
         for r in rej[:30]:
-            lines.append(f"- `{r['file']}`: {r['reason']}")
+            ev = r.get("evidence")
+            evs = (f" [change {ev['change']}, control {ev['control']}, changed fraction {ev['changed_fraction']}]"
+                   if ev else "")
+            lines.append(f"- `{r['file']}`: {r['reason']}{evs}")
         if len(rej) > 30:
             lines.append(f"- ... and {len(rej) - 30} more (see build_report.json)")
     return "\n".join(lines)
