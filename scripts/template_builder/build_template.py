@@ -6,7 +6,7 @@ Run from the repo root with the project venv:
 
 --seed-box x,y,w,h is a box around the watermark on the seed page, in that
 page's pixels. The template is written to assets/stamps/library/<name>/
-(or --library DIR). See docs/template_builder_plan.md.
+(or --library DIR). See docs/template_builder_plan.md and docs/template_builder_v2_plan.md.
 """
 
 import argparse
@@ -28,7 +28,7 @@ def main():
     ap.add_argument("--library", default=None, help="library folder (default assets/stamps/library)")
     ap.add_argument("--max-pages", type=int, default=60)
     ap.add_argument("--outer-iters", type=int, default=2)
-    ap.add_argument("--min-score", type=float, default=0.30, help="minimum registration score")
+    ap.add_argument("--min-score", type=float, default=0.20, help="minimum registration score")
     ap.add_argument("--frame-max-width", type=int, default=1000)
     ap.add_argument("--overwrite", action="store_true")
     a = ap.parse_args()

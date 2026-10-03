@@ -21,6 +21,7 @@ from .template_validate import validate_template
 
 ALL_LABEL = "All library templates"
 DEFAULT_LIB = os.path.join("assets", "stamps", "library")
+REMOVAL_CHOICES = [("Per-pixel colour (v2)", "pixel"), ("Per-region (Stamp Fit)", "region")]
 
 
 def _err(e):
@@ -59,7 +60,7 @@ def m5_refresh(library_dir, current):
     return gr.update(choices=ch, value=keep)
 
 
-def m5_clean(image, templates, library_dir, min_score):
+def m5_clean(image, templates, library_dir, min_score, removal="pixel"):
     if image is None:
         return None, None, "Upload an image first."
     if not templates:
@@ -67,7 +68,7 @@ def m5_clean(image, templates, library_dir, min_score):
     try:
         img = np.asarray(image.convert("RGB") if isinstance(image, Image.Image) else image)[..., :3]
         cleaned, alpha, info, msg = clean_document_template(img, list(templates), library_dir or None,
-                                                            min_score=float(min_score))
+                                                            min_score=float(min_score), removal=removal or "pixel")
         overlay = footprint_overlay(img, alpha) if info["accepted"] else img
         return Image.fromarray(cleaned), Image.fromarray(np.ascontiguousarray(overlay)), msg
     except Exception as e:
@@ -163,7 +164,7 @@ def v_refresh(library_dir, cur_t, cur_r):
     return gr.update(choices=ct, value=vt), gr.update(choices=cr, value=vr)
 
 
-def v_run(template, pages_dir, out_dir, reference, clean_dir, max_pages, min_score, library_dir,
+def v_run(template, pages_dir, out_dir, reference, clean_dir, max_pages, min_score, library_dir, removal="pixel",
           progress=gr.Progress()):
     try:
         if not template:
@@ -173,7 +174,7 @@ def v_run(template, pages_dir, out_dir, reference, clean_dir, max_pages, min_sco
         res = validate_template(template, pages_dir, out_dir or None,
                                 reference=None if reference in (None, "", "None") else reference,
                                 clean_dir=clean_dir or None, max_pages=int(max_pages), min_score=float(min_score),
-                                progress=progress, library_dir=library_dir or None)
+                                progress=progress, library_dir=library_dir or None, removal=removal or "pixel")
         ref_img = res.get("reference_image")
         ref_img = Image.open(ref_img) if ref_img and os.path.isfile(ref_img) else None
         return res["message"], res.get("gallery", []), ref_img, res.get("csv")
@@ -193,9 +194,11 @@ def build_template_tabs():
         gr.Markdown(
             """
             **Method 5** removes a watermark from a **template library** (no trained model). It finds the
-            template on the page with a plain correlation on a faint-darkening signal, checks that the page
-            really shows it, and removes it with Stamp Fit's exact inverse. Build templates in the
-            **Template Builder** tab; the two AriaTender PNGs work too.
+            template on the page with a colour-matched correlation on a faint-darkening signal, checks that
+            the page really shows it, and removes it with an exact inverse: **Per-pixel colour (v2)** uses the
+            template's per-pixel opacity and ink (best for coloured or solid marks), **Per-region (Stamp Fit)**
+            is the earlier flat-ink-per-region fit. Build templates in the **Template Builder** tab; the two
+            AriaTender PNGs work too.
             """
         )
         with gr.Row():
@@ -207,13 +210,14 @@ def build_template_tabs():
                     m5_refresh_btn = gr.Button("↻", scale=1, min_width=40)
                 m5_lib = gr.Textbox(value=DEFAULT_LIB, label="Library folder")
                 m5_score = gr.Slider(0.10, 0.80, value=0.30, step=0.01, label="Min match score")
+                m5_removal = gr.Radio(choices=REMOVAL_CHOICES, value="pixel", label="Removal model")
                 m5_btn = gr.Button("🧩 Clean", variant="primary", size="lg")
             with gr.Column(scale=5):
                 m5_out = gr.Image(label="2. Cleaned", type="pil")
                 m5_overlay = gr.Image(label="Fitted footprint", type="pil")
                 m5_report = gr.Markdown(value="Pick a template and click Clean.")
         m5_refresh_btn.click(m5_refresh, [m5_lib, m5_tpl], [m5_tpl])
-        m5_btn.click(m5_clean, [m5_in, m5_tpl, m5_lib, m5_score], [m5_out, m5_overlay, m5_report])
+        m5_btn.click(m5_clean, [m5_in, m5_tpl, m5_lib, m5_score, m5_removal], [m5_out, m5_overlay, m5_report])
 
     # ---------------- Template Builder ----------------
     with gr.Tab("🛠️ Template Builder"):
@@ -222,6 +226,7 @@ def build_template_tabs():
             Build a template for a watermark that a site stamps on **every page**: give it a folder of 20+
             pages from that site, mark the watermark once on one page, click **Build**. The template is saved
             into the library and can then be used by Method 5. The mark must be **darker** than the page.
+            The builder estimates a per-pixel opacity and colour, so coloured and solid marks work.
             Use **Validate** afterwards to check it on any folder.
             """
         )
@@ -250,11 +255,11 @@ def build_template_tabs():
                         with gr.Accordion("Advanced", open=False):
                             b_maxp = gr.Slider(10, 200, value=60, step=1, label="Max pages")
                             b_iters = gr.Slider(1, 4, value=2, step=1, label="Outer iterations")
-                            b_minscore = gr.Slider(0.10, 0.80, value=0.30, step=0.01, label="Min registration score")
+                            b_minscore = gr.Slider(0.10, 0.80, value=0.20, step=0.01, label="Min registration score")
                             b_framew = gr.Slider(300, 2000, value=1000, step=50, label="Frame max width (px)")
                             b_over = gr.Checkbox(value=False, label="Overwrite an existing template of this name")
                         b_btn = gr.Button("🛠️ Build template", variant="primary", size="lg")
-                        b_prev = gr.Image(label="Template preview (coverage | on checkerboard)", type="pil")
+                        b_prev = gr.Image(label="Template preview (opacity | the mark on paper | support)", type="pil")
                         b_gal = gr.Gallery(label="Fit overlays on accepted pages", columns=3, height="auto")
                         b_report = gr.Markdown(value="Load a folder to start.")
                 b_load.click(b_load_folder, [b_dir], [b_seed, b_editor, b_report])
@@ -278,6 +283,7 @@ def build_template_tabs():
                         with gr.Row():
                             v_maxp = gr.Slider(5, 300, value=100, step=1, label="Max pages")
                             v_score = gr.Slider(0.10, 0.80, value=0.30, step=0.01, label="Min score")
+                        v_removal = gr.Radio(choices=REMOVAL_CHOICES, value="pixel", label="Removal model")
                         v_btn = gr.Button("✅ Run validation", variant="primary", size="lg")
                     with gr.Column(scale=5):
                         v_report = gr.Markdown(value="Choose a template and a pages folder.")
@@ -285,5 +291,5 @@ def build_template_tabs():
                         v_gal = gr.Gallery(label="(overlay, cleaned) pairs", columns=4, height="auto")
                         v_csv = gr.File(label="Per-page CSV")
                 v_refresh_btn.click(v_refresh, [v_lib, v_tpl, v_ref], [v_tpl, v_ref])
-                v_btn.click(v_run, [v_tpl, v_dir, v_out, v_ref, v_clean, v_maxp, v_score, v_lib],
+                v_btn.click(v_run, [v_tpl, v_dir, v_out, v_ref, v_clean, v_maxp, v_score, v_lib, v_removal],
                             [v_report, v_gal, v_ref_img, v_csv])

@@ -6,7 +6,9 @@ Three independent checks, all model-free:
    (e.g. ``assets/stamps/ariatender_wide.png`` for an AriaTender-built
    template) sit on the built template, and how well do the two coverage maps
    agree (Pearson correlation, soft / binary IoU, mean |delta|)?
-2. **Removal over the folder**: Method 5 with only this template on every page.
+2. **Removal over the folder**: Method 5 with only this template on every page,
+   with the chosen removal model (``removal="pixel"``: per-pixel colour, the
+   default; ``"region"``: Stamp Fit's per-region fit).
    ``change_before`` is the leftover mark contrast along the strokes
    (``stamp_fit._colour_change``) on the page, ``change_after`` the same on the
    cleaned page at the same fitted parts -- no ground truth needed.
@@ -123,7 +125,7 @@ def _err(a, b, mask=None):
 # ---------------------------------------------------------------------------
 
 def validate_template(template, pages_dir, out_dir=None, reference=None, clean_dir=None, max_pages=100,
-                      min_score=0.30, progress=None, library_dir=None):
+                      min_score=0.30, progress=None, library_dir=None, removal="pixel"):
     """Runs the three checks; returns dict(ok, message, summary, rows, out_dir, csv,
     gallery (list of image paths, overlay/cleaned pairs), reference_image)."""
     prog = (lambda f, msg="": progress(f, desc=msg)) if progress else (lambda f, msg="": None)
@@ -145,7 +147,7 @@ def validate_template(template, pages_dir, out_dir=None, reference=None, clean_d
         return dict(ok=False, message=f"**Validation failed:** clean-targets folder `{clean_dir}` not found", rows=[], gallery=[])
 
     summary = dict(template=label, template_path=tpl["path"], pages_dir=tl.resolve_path(pages_dir),
-                   out_dir=out_dir, n_pages=len(files), min_score=min_score)
+                   out_dir=out_dir, n_pages=len(files), min_score=min_score, removal=removal)
     ref_res, ref_png = None, None
     if reference and str(reference) not in ("None", ""):
         prog(0.02, "reference comparison")
@@ -171,7 +173,8 @@ def validate_template(template, pages_dir, out_dir=None, reference=None, clean_d
             rows.append(dict(file=os.path.basename(path), accepted=False, time_s=0.0))
             continue
         t0 = time.time()
-        cleaned, alpha, info, _ = clean_document_template(img, [tpl["path"]], library_dir, min_score=min_score)
+        cleaned, alpha, info, _ = clean_document_template(img, [tpl["path"]], library_dir, min_score=min_score,
+                                                          removal=removal)
         dt = time.time() - t0
         acc = info["accepted"]
         row = dict(file=os.path.basename(path), accepted=bool(acc), time_s=round(dt, 3))
@@ -247,7 +250,8 @@ def validate_template(template, pages_dir, out_dir=None, reference=None, clean_d
 
 def _markdown(s, rows):
     L = [f"### Validation of `{s['template']}` on {s['n_pages']} page(s)",
-         f"- accepted **{s['n_accepted']}**, rejected **{s['n_rejected']}** (min score {s['min_score']:.2f})"]
+         f"- accepted **{s['n_accepted']}**, rejected **{s['n_rejected']}** (min score {s['min_score']:.2f}, "
+         f"{'per-pixel colour' if s.get('removal', 'pixel') == 'pixel' else 'per-region (Stamp Fit)'} removal)"]
     if s.get("median_change_before") is not None:
         L.append(f"- leftover mark contrast along the strokes (median, grey levels): "
                  f"**{s['median_change_before']:.1f} -> {s['median_change_after']:.1f}**")

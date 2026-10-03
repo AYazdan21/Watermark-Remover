@@ -2,7 +2,7 @@
 
 Run from the repo root with the project venv:
     .venv/Scripts/python.exe scripts/template_builder/run_m5.py \
-        --pages path/to/pages --out path/to/cleaned [--templates mysite other | all]
+        --pages path/to/pages --out path/to/cleaned [--templates mysite other | all] [--removal pixel|region]
 
 Writes <stem>_cleaned.png for every page into --out and prints a summary.
 Does not touch dataset/ and loads no model.
@@ -31,6 +31,8 @@ def main():
     ap.add_argument("--templates", nargs="+", default=["all"], help="library names / png paths, or 'all'")
     ap.add_argument("--library", default=None)
     ap.add_argument("--min-score", type=float, default=0.30)
+    ap.add_argument("--removal", choices=["pixel", "region"], default="pixel",
+                    help="pixel = per-pixel colour model (default); region = Stamp Fit's per-region fit")
     a = ap.parse_args()
 
     files = list_pages(a.pages)
@@ -47,7 +49,7 @@ def main():
         if img is None:
             print(f"[{i}/{len(files)}] {os.path.basename(f)}: unreadable, skipped")
             continue
-        cleaned, alpha, info, msg = clean_document_template(img, names, a.library, min_score=a.min_score)
+        cleaned, alpha, info, msg = clean_document_template(img, names, a.library, min_score=a.min_score, removal=a.removal)
         stem = os.path.splitext(os.path.basename(f))[0]
         Image.fromarray(cleaned).save(os.path.join(out, f"{stem}_cleaned.png"))
         k = len(info["accepted"])
