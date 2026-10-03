@@ -204,7 +204,7 @@ def load_template(name_or_path, library_dir=None):
     stacked mark (``_load_stacked_real``), ``"AriaTender stacked (old PNG layout)"``
     the old file."""
     s = str(name_or_path).strip().strip('"').strip("'")
-    if s == STACKED_REAL:
+    if s in (STACKED_REAL, _STACKED_REAL_PATH):
         return _load_stacked_real()
     if s in BUILTIN_PNGS:
         return _load_bare_png(BUILTIN_PNGS[s])

@@ -82,6 +82,25 @@ def text_under_mark(y, x):
     return cv2.dilate(txt, np.ones((3, 3), np.uint8)) > 0
 
 
+def pixel_model(tpl, part, obs, B, shape):
+    """The per-pixel colour model of ONE mark whose pose ``part`` is final
+    (sub-pixel refined, with its edge blur ``sigma``): renders the template in
+    its window, fits the page's strength multiplier ``m`` over the footprint
+    pixels that show paper under the mark (page text excluded; ``obs`` the page
+    as float 0-1, ``B`` its paper) and returns dict(x0, y0, a_unit, k, a_w =
+    clip(m peak a_unit, 0, MAX_ALPHA), m, n_used) for the window at (x0, y0)."""
+    x0, y0, a_unit, k = render_pixel(tpl, part, shape)
+    h, w = a_unit.shape
+    a_abs = (tpl["opacity_peak"] * a_unit)[..., None]
+    Bw = B[y0:y0 + h, x0:x0 + w]
+    y = Bw - obs[y0:y0 + h, x0:x0 + w]
+    x = a_abs * (Bw - k)
+    use = (a_unit > 0.1) & ~text_under_mark(y, x)
+    m, n_used = tm.fit_multiplier(y[use], x[use], prior=0.2, min_pixels=300, clip=(0.3, 2.0))
+    a_w = np.clip(m * a_abs[..., 0], 0.0, stamp_fit.MAX_ALPHA)
+    return dict(x0=x0, y0=y0, a_unit=a_unit, k=k, a_w=a_w, m=m, n_used=n_used)
+
+
 def remove_pixel(img, marks):
     """Remove already-located template marks with the per-pixel colour model.
 
@@ -107,15 +126,9 @@ def remove_pixel(img, marks):
     for mk in marks:
         tpl = mk["tpl"]
         part = stamp_fit._subpixel(mk["parts"][0], d, (H, W))
-        x0, y0, a_unit, k = render_pixel(tpl, part, (H, W))
+        mod = pixel_model(tpl, part, obs, B, (H, W))
+        x0, y0, a_unit, k, a_w, m, n_used = (mod[n] for n in ("x0", "y0", "a_unit", "k", "a_w", "m", "n_used"))
         h, w = a_unit.shape
-        a_abs = (tpl["opacity_peak"] * a_unit)[..., None]
-        Bw = B[y0:y0 + h, x0:x0 + w]
-        y = Bw - obs[y0:y0 + h, x0:x0 + w]
-        x = a_abs * (Bw - k)
-        use = (a_unit > 0.1) & ~text_under_mark(y, x)
-        m, n_used = tm.fit_multiplier(y[use], x[use], prior=0.2, min_pixels=300, clip=(0.3, 2.0))
-        a_w = np.clip(m * a_abs[..., 0], 0.0, stamp_fit.MAX_ALPHA)
         sub = A[y0:y0 + h, x0:x0 + w]
         sel = a_w > sub
         A[y0:y0 + h, x0:x0 + w] = np.where(sel, a_w, sub)
@@ -124,7 +137,8 @@ def remove_pixel(img, marks):
         core = a_unit >= 0.5
         mean_ink = (k[core].mean(0) if core.any() else np.full(3, stamp_fit.INK_LUM_PRIOR, np.float32))
         mk["parts"] = [part]
-        infos.append(dict(kind=mk["kind"], parts=[{kk: (round(v, 3) if isinstance(v, float) else v) for kk, v in part.items()}],
+        infos.append(dict(kind=mk["kind"], model="pixel",
+                          parts=[{kk: (round(v, 3) if isinstance(v, float) else v) for kk, v in part.items()}],
                           regions={"pixel": dict(strength=round(float(m * tpl["opacity_peak"]), 3),
                                                  ink=[int(v) for v in np.round(mean_ink * 255)],
                                                  source="per-pixel")},
