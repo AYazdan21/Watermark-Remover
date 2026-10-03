@@ -395,6 +395,21 @@ def inside_fraction(alpha, pose, page_shape, thresh=0.02):
     return float(sel[iy0:iy1, ix0:ix1].sum()) / tot
 
 
+def on_page_pixels(alpha, pose, page_shape, thresh=0.3):
+    """Number of on-page pixels where the template rendered at ``pose`` has
+    coverage >= ``thresh`` (the size term of Method 5's candidate ranking: a tiny
+    fit at the page edge scores a high NCC by chance but has few such pixels)."""
+    t = resized_template(alpha, pose["scale"])
+    th, tw = t.shape[:2]
+    H, W = page_shape
+    x0, y0 = int(round(pose["x"])), int(round(pose["y"]))
+    ix0, iy0 = max(0, -x0), max(0, -y0)
+    ix1, iy1 = min(tw, W - x0), min(th, H - y0)
+    if ix1 <= ix0 or iy1 <= iy0:
+        return 0
+    return int((t[iy0:iy1, ix0:ix1] >= thresh).sum())
+
+
 # ---------------------------------------------------------------------------
 # Multi-scale NCC
 # ---------------------------------------------------------------------------

@@ -47,10 +47,13 @@ from . import stamp_fit
 from .config import BASE_DIR
 
 DEFAULT_LIBRARY_DIR = os.path.join(BASE_DIR, "assets", "stamps", "library")
+STACKED_REAL = "AriaTender stacked (built-in)"
+STACKED_OLD = "AriaTender stacked (old PNG layout)"
 BUILTIN_PNGS = {
     "AriaTender wide (built-in)": os.path.join(BASE_DIR, "assets", "stamps", "ariatender_wide.png"),
-    "AriaTender stacked (built-in)": os.path.join(BASE_DIR, "assets", "stamps", "ariatender_stacked.png"),
+    STACKED_OLD: os.path.join(BASE_DIR, "assets", "stamps", "ariatender_stacked.png"),
 }
+_STACKED_REAL_PATH = "builtin:ariatender_stacked_real"
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,63}$")
 
 
@@ -154,12 +157,55 @@ def _load_bare_png(path):
                 opacity_peak=float(stamp_fit.DEFAULT_STRENGTH))
 
 
+_STACKED_REAL_CACHE = {}
+
+
+def _load_stacked_real():
+    """The AriaTender stacked mark with Stamp Fit's REAL layout, built at load time.
+
+    ``assets/stamps/ariatender_stacked.png`` is a synthetic composite whose Persian
+    subtitle sits ~41 px (at scale 1) lower than on real stamps. Stamp Fit itself
+    places its subtitle part at ``stamp_fit.SUB_OFFSET`` (measured on real pages),
+    so this template is made from Stamp Fit's own logo and subtitle parts: the
+    subtitle at that offset (sub-pixel, bilinear), coverage = max of the two,
+    one flat grey ink (``INK_LUM_PRIOR``), opacity ``DEFAULT_STRENGTH``. Cached
+    (module level) and returned as the SAME dict every time, so the render caches
+    keyed on the arrays keep hitting; callers must not modify it."""
+    srcs = [os.path.join(stamp_fit.STAMP_DIR, stamp_fit._FILES[k]) for k in ("logo", "sub")]
+    mtime = max(os.stat(p).st_mtime_ns for p in srcs)
+    hit = _STACKED_REAL_CACHE.get("tpl")
+    if hit is not None and hit["mtime_ns"] == mtime:
+        return hit
+    T = stamp_fit.templates()
+    logo, sub = T["logo"]["alpha"], T["sub"]["alpha"]
+    sx, sy = stamp_fit.SUB_OFFSET
+    Hh = int(np.ceil(max(logo.shape[0], sy + sub.shape[0]))) + 2
+    Ww = int(np.ceil(max(logo.shape[1], sx + sub.shape[1]))) + 2
+    a = np.zeros((Hh, Ww), np.float32)
+    a[:logo.shape[0], :logo.shape[1]] = logo
+    M = np.float32([[1, 0, sx], [0, 1, sy]])
+    a = np.maximum(a, cv2.warpAffine(sub, M, (Ww, Hh), flags=cv2.INTER_LINEAR)).astype(np.float32)
+    grey = round(float(stamp_fit.INK_LUM_PRIOR) * 255) / 255.0
+    ink = np.full((Hh, Ww, 3), grey, np.float32)
+    meta = dict(name="ariatender_stacked_real", builder_version=0, source="built-in (Stamp Fit logo + subtitle at SUB_OFFSET)",
+                template_size=[Ww, Hh], rel_width=None)
+    tpl = dict(alpha=a, regions={"mark": a}, meta=meta, path=_STACKED_REAL_PATH, kind="png", mtime_ns=mtime,
+               ink=ink, opacity_peak=float(stamp_fit.DEFAULT_STRENGTH))
+    _STACKED_REAL_CACHE["tpl"] = tpl
+    return tpl
+
+
 def load_template(name_or_path, library_dir=None):
     """Library name, template folder path, or bare RGBA PNG path ->
     dict(alpha, regions, meta, path, kind, mtime_ns). Bare PNGs get the same
     speck rule and saturation split ``stamp_fit.templates()`` applies; library
-    templates do not (the builder cleans its own output)."""
+    templates do not (the builder cleans its own output). The built-in names are
+    ``builtin_names()``; ``"AriaTender stacked (built-in)"`` is the real-layout
+    stacked mark (``_load_stacked_real``), ``"AriaTender stacked (old PNG layout)"``
+    the old file."""
     s = str(name_or_path).strip().strip('"').strip("'")
+    if s == STACKED_REAL:
+        return _load_stacked_real()
     if s in BUILTIN_PNGS:
         return _load_bare_png(BUILTIN_PNGS[s])
     cand = resolve_path(s)
@@ -225,4 +271,5 @@ def register_with_stamp_fit(tpl):
 
 
 def builtin_names():
-    return list(BUILTIN_PNGS)
+    """Wide, stacked (real layout), stacked (old PNG layout)."""
+    return [n for n in ("AriaTender wide (built-in)", STACKED_REAL, STACKED_OLD)]

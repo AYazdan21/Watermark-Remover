@@ -16,6 +16,9 @@ signal of ``template_signal``:
    page width), united with the v1 relative-width window; a template without
    that field (v1) is searched over ``geomspace(0.1, 4.0) * page_w / template_w``
    like Stamp Fit. A grey template falls back to the luminance-like match.
+   The candidates are tried in order of significance ``z = score * sqrt(n_on /
+   1000)`` (``n_on`` = on-page pixels with coverage >= 0.3), not raw NCC: a tiny fit
+   at the page edge gets a high NCC by chance, the real mark has far more pixels.
 2. Accept a fit only if ALL hold: NCC score >= ``min_score``; the rendered
    width >= ``stamp_fit.MIN_WIDTH_PX``; at least 40% of the footprint is on the
    page; and the PAGE ITSELF shows the mark (``stamp_fit._evidence``: the colour
@@ -54,6 +57,7 @@ N_CANDS = 5            # candidates refined and evidence-checked per search
 MIN_INSIDE = 0.4       # share of the footprint that must be on the page
 EXTRA_SIZE_TOL = 1.3   # further instances of a template on a page: within this factor of the first one's size...
 EXTRA_SCORE_FRAC = 0.6  # ...and scoring at least this fraction of the first one's score
+ON_COVERAGE = 0.3      # coverage that counts a pixel as 'on' in the size term of the candidate ranking
 REMOVALS = ("pixel", "region")
 
 
@@ -134,16 +138,23 @@ def clean_document_template(img_rgb_uint8, template_names, library_dir=None, min
                 if i == 0:
                     info["rejected"].append(dict(template=label, reason="no candidate", score=0.0))
                 break
-            # Candidates best score first; the first one whose evidence passes wins (a false best
-            # candidate on page clutter must not hide the real mark).
+            # Candidates in order of SIGNIFICANCE, z = score * sqrt(n_on / 1000), not raw NCC (a tiny fit
+            # at the page edge scores a high NCC by chance: 0.68 for 58 px vs 0.62 for the real 692 px
+            # mark); the gates on the raw score stay. The first one whose evidence passes wins (a false
+            # best candidate on page clutter must not hide the real mark).
             chosen, first_fail = None, None
-            for c in sorted(loc["candidates"], key=lambda c: -c["score"]):
+            ranked = []
+            for c in loc["candidates"]:
                 if c["score"] < min_score or (first_score is not None and c["score"] < EXTRA_SCORE_FRAC * first_score):
-                    break
+                    continue
+                n_on = ts.on_page_pixels(tpl["alpha"], c, (H, W), ON_COVERAGE)
+                ranked.append((c["score"] * np.sqrt(n_on / 1000.0), n_on, c))
+            ranked.sort(key=lambda t: -t[0])
+            for z, n_on, c in ranked:
                 pose = _pose_dict(key, c)
                 width = stamp_fit._size(key, pose["scale"])[0]
-                rec = dict(template=label, score=round(c["score"], 4), scale=round(pose["scale"], 4),
-                           x=round(pose["x"], 2), y=round(pose["y"], 2), width_px=int(width))
+                rec = dict(template=label, score=round(c["score"], 4), z=round(float(z), 3), n_on=int(n_on),
+                           scale=round(pose["scale"], 4), x=round(pose["x"], 2), y=round(pose["y"], 2), width_px=int(width))
                 inside = ts.inside_fraction(tpl["alpha"], pose, (H, W))
                 change, control, frac = stamp_fit._evidence(img, [pose])
                 rec.update(change=round(change, 2), control=round(control, 2), changed_fraction=round(frac, 3),
