@@ -59,10 +59,13 @@ import asset_prep
 # Stamp loading / mark registry
 # ---------------------------------------------------------------------------
 
-# _wm_extract_deliverable lives one level above the repo root (sibling of
-# Watermark-Remover), matching the paths the task brief gives relative to cwd
-# "Watermark-Remover": "../_wm_extract_deliverable/...".
-DEFAULT_ASSETS_DIR = Path(__file__).resolve().parents[3] / "_wm_extract_deliverable"
+# The three source crops are tracked in the repo under assets/wm_extract/ (so a
+# fresh clone has them: Method 3's template deblending needs them). The
+# original _wm_extract_deliverable folder one level above the repo root
+# (sibling of Watermark-Remover) is still used when the repo copy is missing.
+_REPO_ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets" / "wm_extract"
+_SIBLING_ASSETS_DIR = Path(__file__).resolve().parents[3] / "_wm_extract_deliverable"
+DEFAULT_ASSETS_DIR = _REPO_ASSETS_DIR if _REPO_ASSETS_DIR.is_dir() else _SIBLING_ASSETS_DIR
 LOGO_NAME = "ariatender_logo_hammer_text.png"
 SUBTITLE_NAME = "ariatender_subtitle_persian.png"
 WIDE_WORDMARK_NAME = "ariatender_wide_wordmark.png"
