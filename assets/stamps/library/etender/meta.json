@@ -1,0 +1,117 @@
+{
+  "name": "etender",
+  "builder_version": 2,
+  "source_folder": "D:\\Amirreza\\Fanap\\Code\\Watermark-Remover\\etender_template",
+  "seed_page": "0_0122bde289.jpg",
+  "seed_box": [
+    171,
+    73,
+    328,
+    304
+  ],
+  "seed_box_input": [
+    186,
+    87,
+    298,
+    276
+  ],
+  "n_pages_used": 27,
+  "n_pages_rejected": 4,
+  "template_size": [
+    239,
+    249
+  ],
+  "rel_width": {
+    "median": 0.3660030627871363,
+    "min": 0.2270048605293008,
+    "max": 0.5386413817847512
+  },
+  "instance_width_px": {
+    "median": 239.0,
+    "min": 169.13339388041186,
+    "max": 508.88309961429513
+  },
+  "strength": {
+    "median": 0.4388542650061977,
+    "min": 0.4292603022585224,
+    "max": 0.48263196138339715
+  },
+  "opacity_peak": 0.445241057872772,
+  "ink_luminance": 0.3169434300554278,
+  "ink_luminance_source": "text_crossings",
+  "ink_luminance_detail": "1779 px, 22 pages",
+  "regions": [
+    {
+      "id": 1,
+      "ink_rgb": [
+        5,
+        115,
+        123
+      ],
+      "pixels": 8346
+    },
+    {
+      "id": 2,
+      "ink_rgb": [
+        82,
+        80,
+        79
+      ],
+      "pixels": 4164
+    },
+    {
+      "id": 3,
+      "ink_rgb": [
+        0,
+        135,
+        159
+      ],
+      "pixels": 3649
+    },
+    {
+      "id": 4,
+      "ink_rgb": [
+        27,
+        103,
+        111
+      ],
+      "pixels": 3474
+    },
+    {
+      "id": 5,
+      "ink_rgb": [
+        0,
+        161,
+        189
+      ],
+      "pixels": 2958
+    }
+  ],
+  "stroke_width_px": 34.78759765625,
+  "support_rules": {
+    "frame_pixels": 115230,
+    "removed_by_valid_pages": 0,
+    "removed_by_min_darkening": 90840,
+    "removed_by_significance": 2320,
+    "removed_small_components": 8,
+    "added_by_gap_closing": 529,
+    "kept": 22591
+  },
+  "frame_expansions": 0,
+  "build_seconds": 131.5,
+  "warnings": [],
+  "params": {
+    "max_pages": 60,
+    "outer_iters": 2,
+    "min_reg_score": 0.2,
+    "frame_max_width": 1000,
+    "workers": 4,
+    "frame_scale_G": 1.0061717569832245,
+    "scale_range": [
+      0.3,
+      3.5
+    ],
+    "n_scales": 30
+  },
+  "created": "2026-10-03T16:36:16"
+}

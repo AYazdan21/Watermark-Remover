@@ -1,0 +1,614 @@
+{
+  "rows": [
+    {
+      "file": "0_0122bde289.jpg",
+      "accepted": true,
+      "score": 0.6414,
+      "scale": 1.00312,
+      "x": 214.56,
+      "y": 104.44,
+      "strength": 0.4409,
+      "agreement": 0.9699,
+      "reason": "",
+      "evidence": {
+        "change": 59.64,
+        "control": 19.14,
+        "changed_fraction": 0.996
+      }
+    },
+    {
+      "file": "0_01a2762f36.jpg",
+      "accepted": true,
+      "score": 0.6696,
+      "scale": 0.98347,
+      "x": 190.05,
+      "y": 49.22,
+      "strength": 0.4356,
+      "agreement": 0.9534,
+      "reason": "",
+      "evidence": {
+        "change": 57.16,
+        "control": 9.58,
+        "changed_fraction": 0.995
+      }
+    },
+    {
+      "file": "0_0778eee152.jpg",
+      "accepted": true,
+      "score": 0.5743,
+      "scale": 1.00312,
+      "x": 180.56,
+      "y": 101.94,
+      "strength": 0.442,
+      "agreement": 0.9601,
+      "reason": "",
+      "evidence": {
+        "change": 64.61,
+        "control": 12.64,
+        "changed_fraction": 0.999
+      }
+    },
+    {
+      "file": "0_16d76789ee.jpg",
+      "accepted": true,
+      "score": 0.6267,
+      "scale": 0.7108,
+      "x": 191.97,
+      "y": 68.32,
+      "strength": 0.4293,
+      "agreement": 0.9692,
+      "reason": "",
+      "evidence": {
+        "change": 55.53,
+        "control": 30.0,
+        "changed_fraction": 1.0
+      }
+    },
+    {
+      "file": "0_17bd4d10ad.jpg",
+      "accepted": false,
+      "score": 0.5213,
+      "scale": null,
+      "x": null,
+      "y": null,
+      "strength": null,
+      "reason": "best candidate (score 0.52) fails the evidence check: change 52.0 < 1.8x control 30.6",
+      "evidence": {
+        "change": 52.01,
+        "control": 30.65,
+        "changed_fraction": 0.996
+      }
+    },
+    {
+      "file": "0_19bc3eb415.jpg",
+      "accepted": true,
+      "score": 0.4518,
+      "scale": 0.71661,
+      "x": 109.22,
+      "y": 142.07,
+      "strength": 0.4389,
+      "agreement": 0.9624,
+      "reason": "",
+      "evidence": {
+        "change": 58.88,
+        "control": 24.86,
+        "changed_fraction": 0.997
+      }
+    },
+    {
+      "file": "0_1abd526396.jpg",
+      "accepted": true,
+      "score": 0.5012,
+      "scale": 0.99831,
+      "x": 212.06,
+      "y": 25.2,
+      "strength": 0.4417,
+      "agreement": 0.9646,
+      "reason": "",
+      "evidence": {
+        "change": 58.89,
+        "control": 30.64,
+        "changed_fraction": 0.997
+      }
+    },
+    {
+      "file": "0_2343856313.jpg",
+      "accepted": true,
+      "score": 0.5772,
+      "scale": 1.0,
+      "x": 206.06,
+      "y": 82.45,
+      "strength": 0.4367,
+      "agreement": 0.9704,
+      "reason": "",
+      "evidence": {
+        "change": 51.13,
+        "control": 19.1,
+        "changed_fraction": 0.999
+      }
+    },
+    {
+      "file": "0_2613dee841.jpg",
+      "accepted": false,
+      "score": 0.4478,
+      "scale": null,
+      "x": null,
+      "y": null,
+      "strength": null,
+      "reason": "best candidate (score 0.45) fails the evidence check: change 12.9 < 1.8x control 15.5",
+      "evidence": {
+        "change": 12.88,
+        "control": 15.54,
+        "changed_fraction": 0.951
+      }
+    },
+    {
+      "file": "0_515422baae.jpg",
+      "accepted": true,
+      "score": 0.479,
+      "scale": 0.71303,
+      "x": 126.47,
+      "y": 166.07,
+      "strength": 0.4442,
+      "agreement": 0.9754,
+      "reason": "",
+      "evidence": {
+        "change": 52.87,
+        "control": 18.19,
+        "changed_fraction": 0.996
+      }
+    },
+    {
+      "file": "0_53327d7d1c.jpg",
+      "accepted": true,
+      "score": 0.7051,
+      "scale": 1.00312,
+      "x": 212.31,
+      "y": 113.94,
+      "strength": 0.4367,
+      "agreement": 0.9782,
+      "reason": "",
+      "evidence": {
+        "change": 58.54,
+        "control": 23.11,
+        "changed_fraction": 0.995
+      }
+    },
+    {
+      "file": "0_53567ca92a.jpg",
+      "accepted": true,
+      "score": 0.7301,
+      "scale": 1.0,
+      "x": 193.06,
+      "y": 152.95,
+      "strength": 0.438,
+      "agreement": 0.9831,
+      "reason": "",
+      "evidence": {
+        "change": 61.22,
+        "control": 9.46,
+        "changed_fraction": 0.999
+      }
+    },
+    {
+      "file": "0_5c0b98c051.jpg",
+      "accepted": true,
+      "score": 0.5798,
+      "scale": 1.003,
+      "x": 407.56,
+      "y": 118.19,
+      "strength": 0.4443,
+      "agreement": 0.9647,
+      "reason": "",
+      "evidence": {
+        "change": 58.46,
+        "control": 16.15,
+        "changed_fraction": 0.999
+      }
+    },
+    {
+      "file": "0_6301682d38.jpg",
+      "accepted": true,
+      "score": 0.677,
+      "scale": 2.12922,
+      "x": 408.94,
+      "y": 173.79,
+      "strength": 0.4372,
+      "agreement": 0.9618,
+      "reason": "",
+      "evidence": {
+        "change": 57.16,
+        "control": 14.84,
+        "changed_fraction": 0.995
+      }
+    },
+    {
+      "file": "0_6398a4eb06.jpg",
+      "accepted": true,
+      "score": 0.6677,
+      "scale": 0.70944,
+      "x": 155.22,
+      "y": 253.08,
+      "strength": 0.4314,
+      "agreement": 0.98,
+      "reason": "",
+      "evidence": {
+        "change": 53.41,
+        "control": 16.65,
+        "changed_fraction": 0.995
+      }
+    },
+    {
+      "file": "0_69f7496575.jpg",
+      "accepted": true,
+      "score": 0.7386,
+      "scale": 1.00011,
+      "x": 214.06,
+      "y": 125.95,
+      "strength": 0.4395,
+      "agreement": 0.9799,
+      "reason": "",
+      "evidence": {
+        "change": 66.11,
+        "control": 16.49,
+        "changed_fraction": 0.998
+      }
+    },
+    {
+      "file": "0_6cec3eb7be.jpg",
+      "accepted": false,
+      "score": 0.4297,
+      "scale": null,
+      "x": null,
+      "y": null,
+      "strength": null,
+      "reason": "best candidate (score 0.43) fails the evidence check: change 13.5 < 1.8x control 27.6",
+      "evidence": {
+        "change": 13.48,
+        "control": 27.56,
+        "changed_fraction": 0.829
+      }
+    },
+    {
+      "file": "0_7e2e89ff7e.jpg",
+      "accepted": true,
+      "score": 0.6079,
+      "scale": 1.00312,
+      "x": 185.56,
+      "y": 98.19,
+      "strength": 0.4383,
+      "agreement": 0.9706,
+      "reason": "",
+      "evidence": {
+        "change": 57.49,
+        "control": 10.56,
+        "changed_fraction": 0.998
+      }
+    },
+    {
+      "file": "0_80940ffb28.jpg",
+      "accepted": true,
+      "score": 0.6066,
+      "scale": 1.00011,
+      "x": 211.06,
+      "y": 102.95,
+      "strength": 0.4388,
+      "agreement": 0.9761,
+      "reason": "",
+      "evidence": {
+        "change": 60.51,
+        "control": 19.47,
+        "changed_fraction": 1.0
+      }
+    },
+    {
+      "file": "0_8fb366aa09.jpg",
+      "accepted": true,
+      "score": 0.5739,
+      "scale": 0.70767,
+      "x": 72.22,
+      "y": 137.83,
+      "strength": 0.4352,
+      "agreement": 0.9859,
+      "reason": "",
+      "evidence": {
+        "change": 49.41,
+        "control": 18.77,
+        "changed_fraction": 1.0
+      }
+    },
+    {
+      "file": "0_92280a6ca0.jpg",
+      "accepted": true,
+      "score": 0.6834,
+      "scale": 0.71213,
+      "x": 92.72,
+      "y": 168.82,
+      "strength": 0.4398,
+      "agreement": 0.9771,
+      "reason": "",
+      "evidence": {
+        "change": 63.48,
+        "control": 12.23,
+        "changed_fraction": 1.0
+      }
+    },
+    {
+      "file": "0_9c5d360646.jpg",
+      "accepted": true,
+      "score": 0.5136,
+      "scale": 0.99812,
+      "x": 192.06,
+      "y": 94.95,
+      "strength": 0.4435,
+      "agreement": 0.9758,
+      "reason": "",
+      "evidence": {
+        "change": 50.98,
+        "control": 19.13,
+        "changed_fraction": 0.998
+      }
+    },
+    {
+      "file": "0_a1aa061f46.jpg",
+      "accepted": false,
+      "score": 0.3885,
+      "scale": null,
+      "x": null,
+      "y": null,
+      "strength": null,
+      "reason": "no measurable mark at the fitted pose (strength -0.000 vs median 0.439)",
+      "evidence": {
+        "change": 21.2,
+        "control": 11.46,
+        "changed_fraction": 0.969
+      }
+    },
+    {
+      "file": "0_a346e73f0a.jpg",
+      "accepted": true,
+      "score": 0.6259,
+      "scale": 1.00261,
+      "x": 220.56,
+      "y": 111.44,
+      "strength": 0.443,
+      "agreement": 0.9658,
+      "reason": "",
+      "evidence": {
+        "change": 51.78,
+        "control": 14.48,
+        "changed_fraction": 0.997
+      }
+    },
+    {
+      "file": "0_a5c2929341.jpg",
+      "accepted": true,
+      "score": 0.5179,
+      "scale": 0.98774,
+      "x": 268.8,
+      "y": -77.79,
+      "strength": 0.4826,
+      "agreement": 0.9463,
+      "reason": "",
+      "evidence": {
+        "change": 64.51,
+        "control": 25.33,
+        "changed_fraction": 1.0
+      }
+    },
+    {
+      "file": "0_d7d4ac9ba4.jpg",
+      "accepted": true,
+      "score": 0.5971,
+      "scale": 1.00312,
+      "x": 188.56,
+      "y": 92.94,
+      "strength": 0.4414,
+      "agreement": 0.9758,
+      "reason": "",
+      "evidence": {
+        "change": 55.17,
+        "control": 10.53,
+        "changed_fraction": 0.997
+      }
+    },
+    {
+      "file": "0_e26179ea06.jpg",
+      "accepted": true,
+      "score": 0.578,
+      "scale": 1.00061,
+      "x": 215.56,
+      "y": 114.2,
+      "strength": 0.4357,
+      "agreement": 0.9135,
+      "reason": "",
+      "evidence": {
+        "change": 52.06,
+        "control": 19.2,
+        "changed_fraction": 0.997
+      }
+    },
+    {
+      "file": "0_e379f7cb83.jpg",
+      "accepted": true,
+      "score": 0.6931,
+      "scale": 0.71661,
+      "x": 185.22,
+      "y": 155.07,
+      "strength": 0.4368,
+      "agreement": 0.9807,
+      "reason": "",
+      "evidence": {
+        "change": 51.41,
+        "control": 12.2,
+        "changed_fraction": 0.999
+      }
+    },
+    {
+      "file": "0_e8b4985dc9.jpg",
+      "accepted": true,
+      "score": 0.7628,
+      "scale": 1.00077,
+      "x": 183.56,
+      "y": 114.95,
+      "strength": 0.4401,
+      "agreement": 0.9802,
+      "reason": "",
+      "evidence": {
+        "change": 60.27,
+        "control": 14.25,
+        "changed_fraction": 0.999
+      }
+    },
+    {
+      "file": "0_f0779d27f5.jpg",
+      "accepted": true,
+      "score": 0.8049,
+      "scale": 1.00312,
+      "x": 211.56,
+      "y": 101.44,
+      "strength": 0.4407,
+      "agreement": 0.9821,
+      "reason": "",
+      "evidence": {
+        "change": 62.01,
+        "control": 19.17,
+        "changed_fraction": 0.998
+      }
+    },
+    {
+      "file": "0_f9df429bd1.jpg",
+      "accepted": true,
+      "score": 0.5995,
+      "scale": 0.99812,
+      "x": 188.06,
+      "y": 92.95,
+      "strength": 0.4384,
+      "agreement": 0.9841,
+      "reason": "",
+      "evidence": {
+        "change": 54.41,
+        "control": 22.22,
+        "changed_fraction": 0.995
+      }
+    }
+  ],
+  "summary": {
+    "name": "etender",
+    "builder_version": 2,
+    "source_folder": "D:\\Amirreza\\Fanap\\Code\\Watermark-Remover\\etender_template",
+    "seed_page": "0_0122bde289.jpg",
+    "seed_box": [
+      171,
+      73,
+      328,
+      304
+    ],
+    "seed_box_input": [
+      186,
+      87,
+      298,
+      276
+    ],
+    "n_pages_used": 27,
+    "n_pages_rejected": 4,
+    "template_size": [
+      239,
+      249
+    ],
+    "rel_width": {
+      "median": 0.3660030627871363,
+      "min": 0.2270048605293008,
+      "max": 0.5386413817847512
+    },
+    "instance_width_px": {
+      "median": 239.0,
+      "min": 169.13339388041186,
+      "max": 508.88309961429513
+    },
+    "strength": {
+      "median": 0.4388542650061977,
+      "min": 0.4292603022585224,
+      "max": 0.48263196138339715
+    },
+    "opacity_peak": 0.445241057872772,
+    "ink_luminance": 0.3169434300554278,
+    "ink_luminance_source": "text_crossings",
+    "ink_luminance_detail": "1779 px, 22 pages",
+    "regions": [
+      {
+        "id": 1,
+        "ink_rgb": [
+          5,
+          115,
+          123
+        ],
+        "pixels": 8346
+      },
+      {
+        "id": 2,
+        "ink_rgb": [
+          82,
+          80,
+          79
+        ],
+        "pixels": 4164
+      },
+      {
+        "id": 3,
+        "ink_rgb": [
+          0,
+          135,
+          159
+        ],
+        "pixels": 3649
+      },
+      {
+        "id": 4,
+        "ink_rgb": [
+          27,
+          103,
+          111
+        ],
+        "pixels": 3474
+      },
+      {
+        "id": 5,
+        "ink_rgb": [
+          0,
+          161,
+          189
+        ],
+        "pixels": 2958
+      }
+    ],
+    "stroke_width_px": 34.78759765625,
+    "support_rules": {
+      "frame_pixels": 115230,
+      "removed_by_valid_pages": 0,
+      "removed_by_min_darkening": 90840,
+      "removed_by_significance": 2320,
+      "removed_small_components": 8,
+      "added_by_gap_closing": 529,
+      "kept": 22591
+    },
+    "frame_expansions": 0,
+    "build_seconds": 131.5,
+    "warnings": [],
+    "params": {
+      "max_pages": 60,
+      "outer_iters": 2,
+      "min_reg_score": 0.2,
+      "frame_max_width": 1000,
+      "workers": 4,
+      "frame_scale_G": 1.0061717569832245,
+      "scale_range": [
+        0.3,
+        3.5
+      ],
+      "n_scales": 30
+    }
+  },
+  "warnings": [],
+  "elapsed": 131.45968890190125
+}

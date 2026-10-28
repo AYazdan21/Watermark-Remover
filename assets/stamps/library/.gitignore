@@ -1,5 +1,12 @@
 # Built templates are local artefacts of the Template Builder; only this
-# README and this file are tracked.
+# README, this file and the shared templates listed below are tracked.
+# The overlay_XX.png build diagnostics show real source pages, so they stay local.
 *
 !README.md
 !.gitignore
+!etender/
+!etender/template.png
+!etender/regions.png
+!etender/meta.json
+!etender/preview.png
+!etender/build_report.json
