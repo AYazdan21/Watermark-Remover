@@ -3,7 +3,8 @@
 Watermark templates built by the **Template Builder** (UI tab "Template
 Builder" or `scripts/template_builder/build_template.py`). Method 5 (Template
 Stamp Fit) and the Validate tool read them from here. Built templates are
-local and git-ignored; only this README is tracked.
+local and git-ignored, except `etender/` (its template, regions, meta,
+preview and build report; see `.gitignore`).
 
 ## Format
 

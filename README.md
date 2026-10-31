@@ -1,7 +1,7 @@
 # Watermark Remover Suite
 
 A Gradio app for removing watermarks from **scanned documents** (Persian tender notices, forms,
-portal pages, spreadsheets) and from **natural photos**. Documents are handled by four selectable
+portal pages, spreadsheets) and from **natural photos**. Documents are handled by five selectable
 methods that all share one hard rule — never touch a pixel you haven't positively identified as
 watermark — while photos go through YOLO detection plus LaMa inpainting.
 
@@ -9,6 +9,11 @@ The document side targets one watermark family in particular: the **AriaTender**
 [aria-tender.net](https://aria-tender.net) stamps onto the tender notices it republishes. It comes
 in two variants, a wide "AriaTender.neT" wordmark with a pink shield-and-gavel glyph, and a stacked
 logo with a Persian subtitle underneath. Both are semi-transparent grey ink over paper.
+
+Other sites' marks are handled by **M5 (Template Stamp Fit)**: the Template Builder learns a site's
+mark from about 20 or more of its pages, with no training, and M5 then finds and removes it. The
+repo ships one such template, for the **ETENDER** mark (a teal "e" disc with "ETENDER", a slogan
+and "wWw.Etender.ir").
 
 ```
 python app.py      # opens http://127.0.0.1:7860 in your browser
@@ -40,8 +45,12 @@ Works well on the common case and fails in specific, documented ways on the rest
 - **What works:** the wide AriaTender mark on standard tender-portal forms. Across the 73 real pages
   in `wm_testset/images/`, 61 are that layout, and every detection model finds the mark on all of
   them.
-- **What doesn't:** large faint marks that span the page, non-AriaTender watermarks, and a handful of
-  page elements the models mistake for watermarks. See [Known issues](#known-issues) for the
+- **What works without a model:** any site's mark that M5 has a template for. The AriaTender wide
+  and stacked marks are built in, ETENDER ships as a library template, and new marks are built from
+  a folder of pages in the Template Builder tab.
+- **What doesn't:** for the trained detectors (M3, M4), large faint marks that span the page,
+  non-AriaTender watermarks, and a handful of page elements the models mistake for watermarks. M5
+  still misses some marks on saturated coloured banners. See [Known issues](#known-issues) for the
   measured breakdown.
 - **What isn't measured:** there is no hand-labelled real test set, so every quality claim here comes
   from either synthetic validation or visual review. `wm_testset/README.md` defines the label format
@@ -68,15 +77,27 @@ GitHub's 100 MB limit:
 
 Put it in `weights/` yourself. Everything else runs without it.
 
-LaMa inpainting downloads its own checkpoint on first use through the `simple-lama-inpainting`
-package. The `lama/` directory in this repo is a reference clone of the original research code and
-is **not** used at runtime.
+LaMa inpainting downloads its own checkpoint (`big-lama.pt`, about 200 MB) when the app starts,
+through the `simple-lama-inpainting` package, into `~/.cache/torch/hub/checkpoints/`. If that
+download fails (for example an SSL certificate error behind a proxy), download
+`https://github.com/enesmsahin/simple-lama-inpainting/releases/download/v0.1.0/big-lama.pt` yourself
+into that folder, or point the `LAMA_MODEL` environment variable at the file. The `lama/` directory
+in this repo is a reference clone of the original research code and is **not** used at runtime.
+
+**Calibration assets.** All committed; no extra download is needed:
+
+| Files | Used by |
+|---|---|
+| `assets/wm_extract/*.png` (3 source crops of the real AriaTender marks) | M3's Template Deblending. If they are missing it silently falls back to Bounded Subtractive. |
+| `assets/stamps/ariatender_wide.png`, `assets/stamps/sources/*.png` | M4's Stamp Fit and M5's built-in AriaTender templates |
+| `assets/stamps/library/<name>/` (`template.png`, `regions.png`, `meta.json`) | M5 library templates, e.g. `etender` |
 
 ---
 
 ## The interface
 
-Five tabs, all served by `app.py` → `watermark_remover/ui.py`.
+Seven tabs, all served by `app.py` → `watermark_remover/ui.py` (the M5 and builder tabs come from
+`template_ui.py`).
 
 | Tab | What it does |
 |---|---|
@@ -84,6 +105,8 @@ Five tabs, all served by `app.py` → `watermark_remover/ui.py`.
 | **📄 1-Click Document Cleaner** | The four document methods (M1–M4), each with its own settings panel. |
 | **🔍 M3 Detection Debug** | Runs M3's detection, mask refinement and false-positive filter, and removes nothing. Green tint = accepted mask, red = rejected, with the reason per instance. |
 | **🔍 M4 Detection Debug** | Runs M4's detection and removal and renders only a diff. The amber tint marks the exact pixels M4 would change inside each box. |
+| **🧩 Template Stamp Fit (M5)** | Removes any mark you have a template for, with no trained model. Shows the cleaned page, the outline of what was removed, and per-mark fit numbers. |
+| **🛠️ Template Builder** | Builds a template from a folder of one site's pages (Build), rebuilds a library template from its saved settings, and checks a template over a folder of pages (Validate). |
 | **🎨 Photo Inpainter** | YOLO detection plus LaMa, or paint the mask yourself with a brush. |
 
 The debug tabs exist because a blank result is ambiguous. "Nothing was detected", "everything was
@@ -102,8 +125,8 @@ can otherwise read as photos.
 
 ## Document methods
 
-All four are on the Document tab, chosen with the **Cleaning Method** radio. Each has its own
-settings group; the others hide themselves.
+M1–M4 are on the Document tab, chosen with the **Cleaning Method** radio. Each has its own
+settings group; the others hide themselves. M5 has its own tab.
 
 ### Shared: Smart Auto-Pilot
 
@@ -161,7 +184,7 @@ colour split → removal strategy.
 
 | Strategy | How it works | Trade-off |
 |---|---|---|
-| **Template Deblending** (default) | Registers the real, photometrically calibrated mark (`template_match.py`) to each instance: one scale/rotation for the page, translation per instance, matched by normalised cross-correlation. Per-pixel alpha and ink then become *known*, so the compositing inverse clears the mark completely. | Best quality, and the only strategy with no grey ghost. Needs the calibrated asset and a good registration score; falls back per instance to Bounded Subtractive. |
+| **Template Deblending** (default) | Registers the real, photometrically calibrated mark (`template_match.py`) to each instance: one scale/rotation for the page, translation per instance, matched by normalised cross-correlation. Per-pixel alpha and ink then become *known*, so the compositing inverse clears the mark completely. | Best quality, and the only strategy with no grey ghost. Needs the calibration crops in `assets/wm_extract/` and a good registration score; falls back per instance to Bounded Subtractive. The result message says how many instances were registered. |
 | **Bounded Subtractive** | Estimates one darkening vector D per instance (85th percentile of background − observed over non-ink pixels) and adds back at most D per pixel. Nothing is ever replaced outright. | Safe on table rules and text: a rule pixel can lift a little but can never jump to paper white. Because D is sized to the typical mark pixel, the darkest half of the mark is capped short and leaves a faint grey ghost. |
 | **Container-Aware Adaptive Fill** | Fills masked pixels from the local background of their own row segment, bounded by detected table rules and box borders, ignoring chromatic pixels when sampling paper (`container_cleaner.py`). | Stops colour leaking between a grey header and a white cell. It is a fill, so content under the mask is not recovered. |
 | **Telea Inpainting** | Classical OpenCV inpainting inside the mask. | Fast fallback. Invents plausible texture, so it can smudge. |
@@ -185,10 +208,59 @@ shade.
 |---|---|---|
 | **Threshold + Flat Fill (per box)** (default) | M1's threshold maths restricted to each box, flattening to the background map. | Simple and fast. Light real content inside a box is flattened too, and anything darker than the page's Otsu threshold survives. |
 | **Bounded Subtractive (per box)** | M3's bounded correction adapted to a box, skipping pixels classified as real ink. | Never replaces a pixel. Leaves the same grey ghost as M3's bounded path. |
-| **Alpha Network (per box)** | Runs the trained `AlphaUNet` over the padded union of boxes and inverts its predicted per-pixel opacity: `true = (observed − alpha·ink) / (1 − alpha)`. No threshold and no background estimate. | Cannot invent content: where predicted alpha is 0, the pixel is unchanged. Quality depends on how well its synthetic training transfers to real scans, which is unmeasured. Needs `weights/alpha_net_best_final.pt`; without it the page comes back unchanged with a message. |
+| **Alpha Network (per box)** | Runs the trained `AlphaUNet` over the padded union of boxes and inverts its predicted per-pixel opacity: `true = (observed − alpha·ink) / (1 − alpha)`. No threshold and no background estimate. | Cannot invent content: where predicted alpha is 0, the pixel is unchanged. Needs an alpha-network checkpoint in `weights/` (see [Models](#models)); without one the page comes back unchanged with a message. |
+| **Stamp Fit + Exact Removal (AriaTender)** | Finds the known AriaTender artwork (wide, or logo + subtitle at the layout measured on real pages) over the **whole page**, using the alpha network's opacity map only as the signal to match against (`stamp_fit.py`). Accepts a fit only if the page itself shows the mark along its strokes, then fits strength, ink colour and an edge profile per region and applies the exact inverse. | The cleanest result on AriaTender pages, including text under the mark. Only knows the two AriaTender designs. On a page where no stamp is accepted, the boxes go to the Alpha Network strategy instead. |
 
 **Options:** Detection Confidence, Detection Model, Box Padding (0–20 px), Removal Strategy,
 Threshold Fine-Tuning, Soft Anti-Aliasing, Stamp Colour Filter.
+
+### M5 — Template Stamp Fit
+
+The method for marks no detector was trained on. It needs **no trained model**: a *template* (the
+mark's per-pixel opacity and ink colour) is located on the page and removed with the exact
+compositing inverse.
+
+**Templates.**
+- Built in: **AriaTender wide** and **AriaTender stacked**. The stacked one is assembled from Stamp
+  Fit's logo and subtitle at the layout measured on real pages; the older synthetic layout stays
+  selectable as "AriaTender stacked (old PNG layout)".
+- Library templates in `assets/stamps/library/<name>/`, made by the **Template Builder** from a folder
+  of about 20+ pages of one site and a box drawn around the mark on one of them. The builder follows
+  multi-image matting (Dekel et al., CVPR 2017): the mark is what all pages share, the page content
+  is what differs. It registers the mark on every page, rejects pages that disagree, and estimates
+  opacity and ink colour per pixel. About 2–3 minutes for 30 pages. `etender` ships with the repo.
+
+**Locate.** A model-free darkening signal (page minus its paper background, real ink zeroed) is
+matched against the template's colour, over the absolute sizes the template was seen at. Candidates
+are tried by significance (score × √size) rather than raw score, so tiny chance matches at a page
+edge don't beat the real mark. A fit is accepted only if the page itself changes colour along the
+fitted strokes, the template explains enough of the local darkening, and enough of it lies on the
+page. When two templates claim the same mark (wide and stacked on one AriaTender logo), the better
+fit wins.
+
+**Removal models** (the "Removal model" radio):
+
+| Model | How it works |
+|---|---|
+| **Page-adaptive (v3)** (default) | Fits the template to *this* page: strength per part of the mark, a direction-aware edge profile (pages are often sharper or softer than the template), and the real ink colour per ink region, by robust least squares on pixels whose local background is reliable. Where the background is clean it reads the opacity straight off the page. Falls back to v2 for a mark if v2 would leave less residue. |
+| **Per-pixel colour (v2)** | The template's own per-pixel opacity and ink, with one strength per page. |
+| **Per-region (Stamp Fit)** | Stamp Fit's removal: one strength and ink per ink region. |
+
+Every pixel outside the removed footprint is byte-identical to the input.
+
+**Limits.** The mark must be darker than the page, rotation is fixed at 0, and one template covers
+one variant of a mark. On saturated coloured banners a mark is sometimes not located at all. A v1
+template (built before builder v2) gives clearly worse results; M5 says so, and the Builder tab's
+**Rebuild with current builder** button rebuilds it from its saved pages and box.
+
+**Command line** (from the repo root):
+
+```bash
+python scripts/template_builder/build_template.py --pages <folder> --seed-page <file> --seed-box x,y,w,h --name <name>
+python scripts/template_builder/run_m5.py --help
+python scripts/template_builder/validate_template.py --help
+python scripts/template_builder/bench_removal.py --help   # synthetic ground-truth benchmark of the removal models
+```
 
 ### Speed
 
@@ -203,6 +275,7 @@ median wall-clock per page, including model loading amortised over the run:
 | M4, alpha network | 1.3 s | 3.2 s |
 | M3, bounded or container fill | ~5 s | 31 s |
 | M3, template deblending | ~28 s | 180 s |
+| M5, page-adaptive (laptop CPU, measured separately) | 5–12 s | — |
 
 Template registration is by far the most expensive step: it searches a scale/rotation grid per page
 and then refines translation per instance. The pages it is slowest on are the large ones with many
@@ -212,8 +285,9 @@ instances.
 
 | Situation | Method |
 |---|---|
-| AriaTender mark on a tender form or portal page | **M3** with Template Deblending |
-| Same, but the mask misses parts of the mark | **M4**, whose boxes cover more ground than the seg masks |
+| AriaTender mark on a tender form or portal page | **M4** with Stamp Fit, **M5**, or **M3** with Template Deblending |
+| Same, but the mask misses parts of the mark | **M4** with Stamp Fit or **M5**: both search the whole page |
+| A non-AriaTender site mark you have ~20+ pages of | **M5**: build a template in the Template Builder tab |
 | Table or spreadsheet whose gridlines matter | **M1/M2** with table protection, or M3 with Container-Aware Fill |
 | A watermark no model recognises | **M1** or **M2**: they need no detector |
 | Content under the mark must survive | **M2**, or M3/M4 with a bounded or alpha-network strategy |
@@ -247,7 +321,7 @@ All are in `weights/`. Single class `watermark` throughout, trained at `imgsz=10
 | **Finetuned (Full, New Dataset)** | `yolo11-seg-full-new-dataset.pt` | YOLO11n-seg | M3 | Full finetune on the 2000-image dataset, 100 epochs. |
 | **Finetuned (Half-Frozen, New Dataset)** | `yolo11-seg-freeze-new-dataset.pt` | YOLO11n-seg | M3 | Same data, `freeze=11`. |
 | **YOLO11s Detect (Half-Frozen, New Dataset)** | `yolo11s-det-freeze-new-dataset.pt` | YOLO11s detect | M4 | Boxes only; `r.masks is None` by construction. |
-| **Alpha Network** | `alpha_net_best_final.pt` | AlphaUNet (3.13 M params) | M4's Alpha Network strategy | Predicts per-pixel opacity and ink colour. |
+| **Alpha Network** | `alpha_net_v4_realft.pt` (fallback `alpha_net_best_final.pt`) | AlphaUNet (3.13 M params) | M4's Alpha Network strategy, and Stamp Fit's locator | Predicts per-pixel opacity and ink colour. v4 is v3 fine-tuned on real pages with Stamp Fit targets. The app uses the first file that exists of `alpha_net_v2_best_final.pt` (not committed), `alpha_net_v4_realft.pt`, `alpha_net_best_final.pt`. |
 | **MobileSAM** | `mobile_sam.pt` | SAM | M3's legacy box path | Turns a coarse box into a tight mask. |
 | **YOLO11s** | `yolo11s_watermark.pt` | YOLO11s detect | M3 legacy, Photo tab | Pre-existing watermark detector, not trained here. |
 | **YOLO11 General** | `yolo11_watermark_general.pt` | YOLO11 detect | M3 legacy, Photo tab default | **Not committed** (110 MB). |
@@ -268,7 +342,8 @@ the output pixel is the input pixel, so it cannot hallucinate content.
 Its opacity prediction is capped (`alpha_max`, 0.9 in the shipped checkpoint) because the inverse
 divides by `1 − alpha`, and any error in the ink estimate is amplified as alpha approaches 1.
 
-Validation numbers from the checkpoint, on **synthetic crops only**:
+Validation numbers from the original checkpoint (`alpha_net_best_final.pt`), on **synthetic crops
+only**:
 
 | Metric | Value |
 |---|---|
@@ -277,7 +352,8 @@ Validation numbers from the checkpoint, on **synthetic crops only**:
 | Recovery error on watermark pixels | 8.0 / 255, against 22.4 if left unchanged (64% better) |
 | Recovery error on clean pixels | 2.37 / 255, against 2.29 unchanged (slightly worse) |
 
-It has not been measured on real scanned pages.
+The original checkpoint has not been measured on real scanned pages; v4 was fine-tuned and checked
+on the real pages in `wm_realtune/`.
 
 ---
 
@@ -293,6 +369,9 @@ Much of the work here is classical image processing. These pieces run with no ne
 | `container_cleaner.py` | Container-aware filling. Segments each row by table rules and box borders, samples the median unmasked background inside each container, falls back to a 2-D window within the same horizontal bounds, and excludes chromatic pixels so a pink stamp is never mistaken for paper. |
 | `localizer.py` | Model-free watermark localisation, used by the Auto tab's document path. Compares two morphological paper estimates (one closing away text-scale strokes, one closing away watermark-scale strokes) across several candidate scales and keeps the most distinct band. Returns a mask plus coverage and confidence, so the caller can decline to act on a weak signal. |
 | `classifier.py` | Document vs. photo routing, from colour and geometry features. |
+| `stamp_fit.py` | M4's Stamp Fit: locates the known AriaTender artwork on the whole page, checks the page itself shows it, fits strength, ink and an edge profile per region, and removes it with the exact inverse. (It uses the alpha network only to locate.) |
+| `template_builder.py`, `template_matte.py`, `template_signal.py` | The Template Builder: registers one site's mark across many pages and estimates its per-pixel opacity and ink (multi-image matting), plus the shared darkening signal and locator. |
+| `template_stamp_fit.py`, `template_adaptive.py`, `template_remove.py` | M5: locate, accept, and the removal models. |
 | `doc_segment.py` | The two-tone colour split. The AriaTender mark is grey lettering plus a pink shield, and one darkening direction in RGB cannot remove both. k-means splits each instance into at most 2 clusters, guarded by a chroma distance that tells "two tones" apart from "one tone, two shades". |
 
 ---
@@ -392,7 +471,8 @@ Each category has its own folder of overlays under `model_eval/issues/`.
 - **Threshold methods can't tell a faint rule from a watermark stroke.** M1/M2 and M4's threshold
   strategy will flatten light real content inside the region they act on.
 - **Only AriaTender is trained for.** A tiled diagonal "CONFIDENTIAL" is mostly found, plausibly
-  because the training set includes tiled layouts, but no other mark is supported on purpose.
+  because the training set includes tiled layouts, but no other mark is supported on purpose by the
+  trained models. Other marks go through M5 with a template.
 - **Synthetic training only.** Every trained model here learned from composited synthetic pages. The
   gap to real scans is real and unquantified.
 
@@ -413,7 +493,7 @@ python scripts/wm_dataset/generate.py --backgrounds-dir wm_backgrounds_v2 \
 ```
 
 - `asset_prep.py` turns a watermark crop lifted off a real document into a clean, photometrically
-  calibrated stamp. The same assets feed `template_match.py`.
+  calibrated stamp. The crops are in `assets/wm_extract/`; the same stamps feed `template_match.py`.
 - `compositor.py` places marks in five patterns (single, oversize, corner, lattice, diagonal) and
   accumulates a continuous alpha map that is exact ground truth.
 - `labels.py` turns that alpha map into YOLO-seg polygons, using a threshold relative to each
@@ -480,7 +560,17 @@ watermark_remover/         The application
   segmenter.py             M3 detection, SAM refinement, false-positive filter
   detector.py              M4 detection (boxes only)
   doc_debug.py             The two debug tabs
-  template_match.py        Calibrated-template registration
+  template_match.py        M3: calibrated-template registration
+  stamp_fit.py             M4: Stamp Fit (AriaTender)
+  template_ui.py           M5 and Template Builder tabs
+  template_stamp_fit.py    M5: locate + accept
+  template_adaptive.py     M5: page-adaptive removal (v3)
+  template_remove.py       M5: per-pixel removal (v2)
+  template_builder.py      Template Builder
+  template_matte.py        Builder: per-pixel opacity/ink estimation
+  template_signal.py       Shared darkening signal and locator
+  template_library.py      Template library + built-in templates
+  template_validate.py     Validate a template over a folder
   container_cleaner.py     Container-aware background filling
   unmixer.py               Alpha unmixing
   localizer.py             Model-free watermark localisation
@@ -493,18 +583,23 @@ scripts/
   wm_dataset/              Synthetic dataset generator (this repo's own)
   kaggle_dataset/          Frozen copy of the generator behind the shipped models
   alpha_net/               Alpha network training library
+  template_builder/        Template Builder / M5 CLIs and the removal benchmark
   eval_models/             Model evaluation and reporting
   train_segmenter.py       Local YOLO11-seg training + evaluation
   predict_overlays.py      Inference overlays on unlabelled images
   compare_methods.py       M1/M2 verification against the frozen reference
   image_scraper.py         Document scraper
 weights/                   All model checkpoints
+assets/stamps/             Calibrated AriaTender stamps (M4 Stamp Fit, M5 built-ins)
+assets/stamps/library/     M5 templates (etender is tracked; others stay local)
+assets/wm_extract/         Calibration crops for M3's Template Deblending
 wm_testset/                Real evaluation images (no labels yet)
 wm_backgrounds_v2/         Synthetic background pages
 wm_dataset_v2/             Generated training data
 dataset/                   The app's auto-saved originals/results
 tests/reference/           Frozen original algorithm, for M1/M2 verification
 docs/images/               Images used by this README
+docs/template_builder_*    Design notes for the Template Builder and M5
 model_eval/                Evaluation outputs (git-ignored)
 lama/                      Reference clone of LaMa, unused at runtime
 ```
