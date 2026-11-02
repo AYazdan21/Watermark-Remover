@@ -61,6 +61,7 @@ import torch
 from ultralytics import SAM, YOLO
 
 from .config import BASE_DIR
+from .model_download import ensure_general_model
 from .unmixer import estimate_mark_color, unmix_region
 
 # --- model files -------------------------------------------------------
@@ -127,7 +128,9 @@ def get_yolo_model(name: str):
     caching pattern."""
     if name not in _yolo_models:
         path = os.path.join(BASE_DIR, _MODEL_FILES.get(name, _MODEL_FILES["YOLO11s"]))
-        if not os.path.exists(path):
+        if name == "YOLO11 General":
+            ensure_general_model(path)
+        elif not os.path.exists(path):
             raise FileNotFoundError(f"Model file {path} not found.")
         _yolo_models[name] = YOLO(path)
     return _yolo_models[name]

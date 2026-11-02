@@ -9,6 +9,7 @@ from ultralytics import YOLO
 
 from .config import BASE_DIR
 from .lama_engine import lama
+from .model_download import ensure_general_model
 from .storage import save_image_triple
 from .unmixer import unmix_region
 
@@ -31,7 +32,9 @@ def get_yolo_model(model_name: str):
             path = os.path.join(BASE_DIR, "weights", "yolo11_watermark_general.pt")
         else:
             path = os.path.join(BASE_DIR, "weights", "yolo11s_watermark.pt")
-        if not os.path.exists(path):
+        if model_name == "YOLO11 General Watermarks":
+            ensure_general_model(path)
+        elif not os.path.exists(path):
             raise FileNotFoundError(f"Model file {path} not found.")
         print(f"Loading {model_name} from {path}...")
         _yolo_models[model_name] = YOLO(path)

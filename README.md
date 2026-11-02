@@ -75,7 +75,7 @@ GitHub's 100 MB limit:
 |---|---|
 | `weights/yolo11_watermark_general.pt` (110 MB) | The Photo tab's default detector, and M3's "YOLO11 General" / "Both (Union)" model choices |
 
-Put it in `weights/` yourself. Everything else runs without it.
+The app downloads it automatically the first time it is needed, from its public source on Hugging Face ([corzent/yolo11x_watermark_detection](https://huggingface.co/corzent/yolo11x_watermark_detection), `best.pt`; research and educational licence), and checks its SHA-256 before using it. If the download fails, the error message gives the link so you can save it to `weights/` by hand. Everything else runs without it.
 
 LaMa inpainting downloads its own checkpoint (`big-lama.pt`, about 200 MB) when the app starts,
 through the `simple-lama-inpainting` package, into `~/.cache/torch/hub/checkpoints/`. If that
@@ -324,7 +324,7 @@ All are in `weights/`. Single class `watermark` throughout, trained at `imgsz=10
 | **Alpha Network** | `alpha_net_v4_realft.pt` (fallback `alpha_net_best_final.pt`) | AlphaUNet (3.13 M params) | M4's Alpha Network strategy, and Stamp Fit's locator | Predicts per-pixel opacity and ink colour. v4 is v3 fine-tuned on real pages with Stamp Fit targets. The app uses the first file that exists of `alpha_net_v2_best_final.pt` (not committed), `alpha_net_v4_realft.pt`, `alpha_net_best_final.pt`. |
 | **MobileSAM** | `mobile_sam.pt` | SAM | M3's legacy box path | Turns a coarse box into a tight mask. |
 | **YOLO11s** | `yolo11s_watermark.pt` | YOLO11s detect | M3 legacy, Photo tab | Pre-existing watermark detector, not trained here. |
-| **YOLO11 General** | `yolo11_watermark_general.pt` | YOLO11 detect | M3 legacy, Photo tab default | **Not committed** (110 MB). |
+| **YOLO11 General** | `yolo11_watermark_general.pt` | YOLO11 detect | M3 legacy, Photo tab default | **Not committed** (110 MB); downloaded on first use from Hugging Face (`corzent/yolo11x_watermark_detection`). |
 
 ### About the segmentation models
 
